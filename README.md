@@ -1,3 +1,5 @@
+![Screenshot 2025-03-31 at 2 32 22 PM](https://github.com/user-attachments/assets/3c4e1323-9598-4fa3-bd50-4446c27acfe4)
+
 # MacCraft
 
 A 3D voxel game for classic Macintosh computers running System 7.0.1.
