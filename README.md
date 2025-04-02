@@ -8,7 +8,7 @@ A 3D voxel game for classic Macintosh computers running System 7.0.1.
 
 ## Description
 
-MacCraft is a lightweight 3D voxel game inspired by Minecraft, built specifically for classic Macintosh computers with limited resources. Experience block-based construction and exploration with a DOOM-style rendering approach optimized for 68K processors.
+MacCraft is a lightweight game inspired by Minecraft, built specifically for classic Macintosh computers with limited resources. Experience block-based construction and exploration with a SimCity-style rendering approach optimized for 68K processors.
 
 ### Key Features
 
