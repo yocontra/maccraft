@@ -1,4 +1,6 @@
 ![Screenshot 2025-03-31 at 2 32 22 PM](https://github.com/user-attachments/assets/3c4e1323-9598-4fa3-bd50-4446c27acfe4)
+![Screenshot 2025-04-02 at 8 10 08 AM](https://github.com/user-attachments/assets/6d2ed3b9-7d77-4370-90df-d5bf15c6f43c)
+
 
 # MacCraft
 
@@ -10,11 +12,9 @@ MacCraft is a lightweight 3D voxel game inspired by Minecraft, built specificall
 
 ### Key Features
 
-- Grid-aligned movement system
 - Block placement and removal
-- Inventory system for block selection
 - Classic Macintosh UI with proper event handling
-- Optimized BSP-based rendering for maximum performance
+- Optimized Isometric rendering for maximum performance
 
 ### Requirements
 
