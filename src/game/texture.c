@@ -24,7 +24,7 @@
 /* ---------------------------------------------------------------- */
 
 static const RGBColor kGrassTopBase   = {0x3300, 0xCC00, 0x3300};
-static const RGBColor kGrassLeftBase  = {0x0000, 0x6600, 0x0000};
+static const RGBColor kGrassLeftBase  = {0x0000, 0x8800, 0x2200};
 static const RGBColor kGrassRightBase = {0x0000, 0x9900, 0x0000};
 
 /* Grain inks on a colour screen: a second shade of the face's own hue (darker
@@ -135,7 +135,7 @@ static const Pattern kStoneRightGrainMono = /* 25% diagonal, '\' (16/64) */
 /* Scene background.                                                 */
 /* ---------------------------------------------------------------- */
 
-static const RGBColor kSkyColor = {0xAAAA, 0xAAAA, 0xCC00};
+static const RGBColor kSkyColor = {0x4400, 0x7700, 0xBB00};
 
 static const Pattern kSkyPattern = /* 25% 2px checker (16/64) */
     {0x88, 0x22, 0x88, 0x22, 0x88, 0x22, 0x88, 0x22};

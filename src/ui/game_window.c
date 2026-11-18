@@ -486,7 +486,13 @@ static void DrawBlockSelector(void)
         ForeColor(blackColor);
         FrameRect(&blockRect);
 
-        PenPat(BlockPattern((BlockID)(i + 1)));
+        if (sHasColor) {
+            RGBForeColor(Texture_BaseColor((BlockID)(i + 1), 0));
+            PenPat(&qd.black);
+        }
+        else {
+            PenPat(BlockPattern((BlockID)(i + 1)));
+        }
         PaintRect(&blockRect);
 
         /* Highlight the selected block type */
@@ -702,11 +708,12 @@ static void GameWindow_Render(void)
      * solid tint on colour displays and white on 1-bit ones. */
     DetectColor();
     if (sHasColor) {
-        /* EraseRect fills with the *background* colour through the pattern, so
-         * that is the pair to set: RGBForeColor/PaintRect painted white. */
-        RGBBackColor(Texture_SkyColor());
-        BackPat(&qd.white);
-        EraseRect(&sDisplayRect);
+        /* Solid sky: an all-ones pen pattern makes PaintRect fill with the
+         * foreground colour. EraseRect paints the pattern itself, which is why
+         * the sky stayed white no matter what the background colour was. */
+        RGBForeColor(Texture_SkyColor());
+        PenPat(&qd.black);
+        PaintRect(&sDisplayRect);
     }
     else {
         ForeColor(blackColor);
