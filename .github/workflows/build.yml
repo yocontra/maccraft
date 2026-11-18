@@ -68,4 +68,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "MacCraft $GITHUB_REF_NAME" --generate-notes
+        run: |
+          set -euo pipefail
+          # Name the assets: dist/ also holds MacCraft.ad and MacCraft.APPL,
+          # which are zero-byte data-fork placeholders, and the upload API
+          # rejects those with "HTTP 400: Bad Content-Length".
+          assets="dist/MacCraft.dsk dist/MacCraft.bin"
+          sit=$(ls dist/MacCraft-*-68k.sit 2>/dev/null | head -1 || true)
+          [ -n "$sit" ] && assets="$assets $sit"
+          gh release create "$GITHUB_REF_NAME" $assets \
+            --title "MacCraft $GITHUB_REF_NAME" --generate-notes
