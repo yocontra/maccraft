@@ -3,11 +3,13 @@
 #include <Fonts.h>
 #include <Memory.h>
 #include <Quickdraw.h>
+#include <TextUtils.h>
 #include <Windows.h>
 
 #include "../constants.h"
 #include "../error.h"
 #include "../game/iso.h"
+#include "../game/texture.h"
 #include "../game/world.h"
 #include "game_window.h"
 #include "utils.h"
@@ -44,19 +46,153 @@ static void GameWindow_Update(void);
 static void GameWindow_Render(void);
 static void DrawWorld(Rect *view);
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, Pattern *pat);
-static Pattern *BlockPattern(BlockID id);
-static void DrawBlock(short x, short y, short z, BlockID id);
-static void GameWindow_HandleActivate(Boolean becomingActive);
-static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown);
-static Boolean GameWindow_HandleKeyDown(char key);
-static void SelectorBlockRect(short index, Rect *outRect);
-static void DrawBlockSelector(void);
-static void InvalidateColumn(short x, short y, short z);
-static void PanCamera(short dx, short dy);
-static short FloorDivInt(int a, int b);
-static void UnprojectClamped(short px, short py, short *outX, short *outY);
-static void ComputeVisibleRange(Rect *view, short *xMin, short *yMin, short *xMax, short *yMax);
+                      short y3, BlockID id, short face);
+/* The selector still wants a single pattern per block. */
+static Pattern *BlockPattern(BlockID id)
+{
+    switch (id) {
+    case 2:  return &qd.ltGray;  /* stone */
+    case 3:  return &qd.white;   /* grass */
+    case 1:
+    default: return &qd.gray;    /* dirt */
+    }
+}
+
+/* Scene and block palette. The patterns are for 1-bit displays; the colours
+ * are what a colour display actually fills with. */
+static const RGBColor kSceneBack   = {0x8800, 0xAA00, 0xDD00};
+static const RGBColor kSceneGround = {0x9999, 0x8888, 0x6666};
+static const RGBColor kOutline     = {0x0000, 0x0000, 0x0000};
+
+static const RGBColor kGrassTop    = {0x0000, 0xBB00, 0x2200};
+static const RGBColor kGrassLeft   = {0x0000, 0x7700, 0x1100};
+static const RGBColor kGrassRight  = {0x0000, 0x8800, 0x1800};
+
+static const RGBColor kDirtTop     = {0xAA00, 0x5500, 0x0000};
+static const RGBColor kDirtLeft    = {0x8800, 0x4400, 0x1100};
+static const RGBColor kDirtRight   = {0x8800, 0x4400, 0x0000};
+
+static const RGBColor kStoneTop    = {0xAAAA, 0xAAAA, 0xAAAA};
+static const RGBColor kStoneLeft   = {0x5555, 0x5555, 0x5555};
+static const RGBColor kStoneRight  = {0x8888, 0x8888, 0x8888};
+
+/* Filled polygons take their colour from the *pen pattern*, so a plain
+ * 1-bit pattern can only ever be a shade of grey: PaintPoly with qd.white
+ * yields white and RGBForeColor is ignored. MakeRGBPat builds a pattern that
+ * renders as an actual colour on a colour display and as a dither on a 1-bit
+ * one, which is what makes the faces distinguishable on both. */
+/* Whether the display has colour. On a 1-bit screen a face is a pattern; on a
+ * colour screen the same pattern's 1-bits take the foreground colour, so set
+ * that colour and fill with an all-ones pattern. */
+static Boolean sHasColor = false;
+
+static void DetectColor(void)
+{
+    PixMapHandle pm;
+
+    sHasColor = false;
+    pm = GetGDevice() != NULL ? (*GetGDevice())->gdPMap : NULL;
+    if (pm != NULL && *pm != NULL && (*pm)->pixelSize > 1) {
+        sHasColor = true;
+    }
+}
+
+/* Top / left / right pattern and colour for one block type. */
+static void BlockFaces(BlockID id, Pattern **topPat, const RGBColor **topCol,
+                       Pattern **leftPat, const RGBColor **leftCol,
+                       Pattern **rightPat, const RGBColor **rightCol)
+{
+    switch (id) {
+    case 2: /* stone */
+        *topPat = &qd.ltGray;  *topCol = &kStoneTop;
+        *leftPat = &qd.dkGray; *leftCol = &kStoneLeft;
+        *rightPat = &qd.gray;  *rightCol = &kStoneRight;
+        break;
+    case 3: /* grass */
+        *topPat = &qd.white;   *topCol = &kGrassTop;
+        *leftPat = &qd.dkGray; *leftCol = &kGrassLeft;
+        *rightPat = &qd.gray;  *rightCol = &kGrassRight;
+        break;
+    case 1: /* dirt */
+    default:
+        *topPat = &qd.gray;    *topCol = &kDirtTop;
+        *leftPat = &qd.dkGray; *leftCol = &kDirtLeft;
+        *rightPat = &qd.gray;  *rightCol = &kDirtRight;
+        break;
+    }
+}
+
+/* Create the game window and lay out the play area and the selector strip. */
+void GameWindow_Initialize(void)
+{
+    Rect windowRect;
+    short screenWidth, screenHeight, windowWidth, windowHeight;
+    short displayWidth, displayHeight;
+
+    if (sInitialized) {
+        return;
+    }
+
+    screenWidth  = (short)(qd.screenBits.bounds.right - qd.screenBits.bounds.left);
+    screenHeight = (short)(qd.screenBits.bounds.bottom - qd.screenBits.bounds.top);
+
+    windowWidth  = (short)((screenWidth * 4) / 5);
+    windowHeight = (short)(screenHeight - 80);
+
+    SetRect(&windowRect, (short)((screenWidth - windowWidth) / 2), 40,
+            (short)((screenWidth - windowWidth) / 2 + windowWidth), (short)(40 + windowHeight));
+
+    sWindow = NewWindow(NULL, &windowRect, "\pMacCraft - Game", true, documentProc,
+                        (WindowPtr)-1, true, 0);
+    if (sWindow == NULL) {
+        return;
+    }
+
+    SetPort(sWindow);
+    sContentRect = sWindow->portRect;
+
+    /* Block selector strip along the bottom. */
+    SetRect(&sBlockSelectorRect, kWindowMargin,
+            (short)(sContentRect.bottom - kGameBlockSelectorHeight - kWindowMargin),
+            (short)(sContentRect.right - kWindowMargin),
+            (short)(sContentRect.bottom - kWindowMargin));
+
+    /* Play area above it. */
+    SetRect(&sDisplayRect, kGameViewMargin, kGameViewMargin,
+            (short)(sContentRect.right - kGameViewMargin),
+            (short)(sBlockSelectorRect.top - kGameViewMargin));
+
+    /* Centre tile (24,24) in the play area: Iso_Project(24,24,0,0,0) is
+     * (0, 384), so the camera offset is the display centre minus that. */
+    displayWidth  = (short)(sDisplayRect.right - sDisplayRect.left);
+    displayHeight = (short)(sDisplayRect.bottom - sDisplayRect.top);
+    sCamX = (short)(displayWidth / 2);
+    sCamY = (short)(displayHeight / 2 - 384);
+
+    sBlockType  = 0;
+    sDirty      = false;
+    sInitialized = true;
+    sIsVisible   = false;
+
+    World_Reset();
+}
+
+/* Dispose of the window and free what it owned. */
+void GameWindow_Dispose(void)
+{
+    if (!sInitialized) {
+        return;
+    }
+
+    if (sWindow != NULL) {
+        DisposeWindow(sWindow);
+        sWindow = NULL;
+    }
+
+    sInitialized = false;
+    sIsVisible   = false;
+    sDirty       = false;
+}
 
 /* Record a rect that needs repainting. */
 static void MarkDirty(const Rect *r)
@@ -74,112 +210,54 @@ static void MarkDirty(const Rect *r)
     }
 }
 
-/* Turn the recorded dirty rect into an InvalRect. Never draws. */
+/* Turn a pending repaint into an InvalRect, so drawing only ever happens
+ * inside a BeginUpdate/EndUpdate pass. */
 static void FlushDirty(void)
 {
-    GrafPtr savedPort;
+    Rect r;
 
-    if (!sDirty || sWindow == NULL) {
+    if (!sDirty || !sInitialized || sWindow == NULL) {
         return;
     }
 
-    /* InvalRect targets the current port's window, so make ours current. */
-    GetPort(&savedPort);
-    SetPort(sWindow);
-    InvalRect(&sDirtyRect);
-    SetPort(savedPort);
-
+    r = sDirtyRect;
     sDirty = false;
+    InvalRect(&r);
 }
 
-/* Initialize and create the game window */
-void GameWindow_Initialize(void)
+/* Face lookups come from src/game/texture.c, which owns the per-block,
+ * per-face base colour, base pattern and grain for both display types. */
+static Pattern *FacePattern(BlockID id, short face)
 {
-    Rect windowRect;
-    short screenWidth, screenHeight, windowWidth, windowHeight, displayWidth, displayHeight;
-    OSErr err;
-
-    /* Prevent double initialization */
-    if (sInitialized) {
-        return;
-    }
-
-    /* Check available memory */
-    err = CheckMemory();
-    if (err != noErr) {
-        HandleError(kErrMemoryFull, kCtxOpeningGameWindow, false); /* Non-fatal */
-        return;
-    }
-
-    /* Calculate a window size that fits well on the screen */
-    screenWidth  = qd.screenBits.bounds.right - qd.screenBits.bounds.left;
-    screenHeight = qd.screenBits.bounds.bottom - qd.screenBits.bounds.top;
-    windowWidth  = (screenWidth * 4 / 5);
-    windowHeight = screenHeight - 80;
-
-    /* Create centered window */
-    SetRect(&windowRect, (screenWidth - windowWidth) / 2, 40,
-            (screenWidth - windowWidth) / 2 + windowWidth, 40 + windowHeight);
-
-    /* Create the window */
-    sWindow = NewWindow(NULL, &windowRect, "\pMacCraft - Game", true, documentProc, (WindowPtr)-1,
-                        true, 0);
-
-    if (sWindow == NULL) {
-        HandleError(kErrWindowCreation, kCtxOpeningGameWindow, false);
-        return;
-    }
-
-    SetPort(sWindow);
-
-    /* Setup main content area (whole window) */
-    sContentRect = sWindow->portRect;
-
-    /* Setup block selector area at bottom */
-    SetRect(&sBlockSelectorRect, kWindowMargin,
-            sContentRect.bottom - kGameBlockSelectorHeight - kWindowMargin,
-            sContentRect.right - kWindowMargin, sContentRect.bottom - kWindowMargin);
-
-    /* Setup game view area - full width, from top to block selector */
-    SetRect(&sDisplayRect, kGameViewMargin, kGameViewMargin, sContentRect.right - kGameViewMargin,
-            sBlockSelectorRect.top - kGameViewMargin);
-
-    /* Centre the world tile (24,24) in the display: Iso_Project(24,24,0,0,0) is
-     * (0, 384), so the camera offset is the display centre minus that. */
-    displayWidth  = sDisplayRect.right - sDisplayRect.left;
-    displayHeight = sDisplayRect.bottom - sDisplayRect.top;
-    sCamX         = displayWidth / 2;
-    sCamY         = displayHeight / 2 - 384;
-
-    /* Start with the default flat plateau so the first frame is playable. */
-    World_Reset();
-
-    sDirty       = false;
-    sInitialized = true;
-    sIsVisible   = false;
+    return Texture_BasePattern(id, face);
 }
 
-/* Dispose of the game window and clean up resources */
-void GameWindow_Dispose(void)
+/* Grain patterns: the second tone of each face. On a colour display the base
+ * is a solid colour and this pattern is filled in a darker shade of it; on a
+ * 1-bit display the base is a pattern and this one is filled in black, so a
+ * face still reads as textured on a Macintosh Plus. */
+static Pattern *FaceGrainPattern(BlockID id, short face, Boolean hasColor)
 {
-    if (!sInitialized) {
-        return;
-    }
-
-    /* Dispose window after all resources are freed */
-    if (sWindow != NULL) {
-        DisposeWindow(sWindow);
-        sWindow = NULL;
-    }
-
-    sInitialized = false;
-    sIsVisible   = false;
-    sDirty       = false;
+    return Texture_GrainPattern(id, face, hasColor);
 }
 
-/* Fill a four-point polygon with the given pattern. */
+static const RGBColor *FaceGrainColor(BlockID id, short face)
+{
+    return Texture_GrainColor(id, face, true);
+}
+
+static const RGBColor *FaceColor(BlockID id, short face)
+{
+    return Texture_BaseColor(id, face);
+}
+
+/* Fill one face. FillPoly takes an explicit pattern: on a colour display the
+ * pattern's 1-bits take the foreground colour, so an all-ones pattern plus
+ * RGBForeColor is a solid colour; on a 1-bit display the pattern itself is the
+ * fill. Painting the polygon any other way filled with the pen colour and
+ * produced the black play area. */
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, Pattern *pat)
+                      short y3, BlockID id, short face)
 {
     PolyHandle poly;
 
@@ -188,28 +266,27 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
         return;
     }
 
-    PenPat(pat);
     MoveTo(x0, y0);
     LineTo(x1, y1);
     LineTo(x2, y2);
     LineTo(x3, y3);
     ClosePoly();
-    PaintPoly(poly);
-    KillPoly(poly);
-}
 
-/* Pattern used for each block id (0 = empty, 1 = dirt, 2 = stone, 3 = grass). */
-static Pattern *BlockPattern(BlockID id)
-{
-    switch (id) {
-    case 2:
-        return &qd.gray; /* stone */
-    case 3:
-        return &qd.ltGray; /* grass */
-    case 1:
-    default:
-        return &qd.dkGray; /* dirt */
+    if (sHasColor && id >= 1 && id <= 3) {
+        /* Flat shades on a colour display: a dithered grain turns into visible
+         * noise on a 256-colour Mac, and the three face shades plus the black
+         * outline are what make the shape read. */
+        RGBForeColor(FaceColor(id, face));
+        FillPoly(poly, &qd.black);
     }
+    else {
+        /* One bit per pixel: texture is the only way to tell the faces and the
+         * blocks apart, so base pattern plus a coarser grain. */
+        FillPoly(poly, FacePattern(id, face));
+        FillPoly(poly, FaceGrainPattern(id, face, false));
+    }
+
+    KillPoly(poly);
 }
 
 /* Draw one block: top diamond plus its two visible side faces, all centred on
@@ -217,25 +294,32 @@ static Pattern *BlockPattern(BlockID id)
 static void DrawBlock(short x, short y, short z, BlockID id)
 {
     short sx, sy;
-    Pattern *pat;
 
     Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
     sx += sDisplayRect.left;
     sy += sDisplayRect.top;
 
-    pat = BlockPattern(id);
-
     /* Top face: diamond centred at (sx, sy), kTileW x kTileH. */
     PaintQuad(sx, sy - kTileH / 2, sx + kTileW / 2, sy, sx, sy + kTileH / 2, sx - kTileW / 2, sy,
-              pat);
+              id, 0);
 
-    /* Left face, dropping one half tile per z level. */
-    PaintQuad(sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH / 2 + kTileH / 2,
-              sx - kTileW / 2, sy + kTileH / 2, pat);
+    /* Left face. */
+    PaintQuad(sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH,
+              sx - kTileW / 2, sy + kTileH / 2, id, 1);
 
     /* Right face. */
     PaintQuad(sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
-              sx, sy + kTileH / 2 + kTileH / 2, pat);
+              sx, sy + kTileH, id, 2);
+
+    /* 1px outline so adjacent faces stay separable. The pen takes its colour
+     * from the fore colour, so set that too or the outline is invisible. */
+    RGBForeColor(&kOutline);
+    PenPat(&qd.black);
+    MoveTo(sx, sy - kTileH / 2);
+    LineTo(sx + kTileW / 2, sy);
+    LineTo(sx, sy + kTileH / 2);
+    LineTo(sx - kTileW / 2, sy);
+    LineTo(sx, sy - kTileH / 2);
 }
 
 /* Inverse of Iso_Project's documented z=0 mapping, clamped to the world.
@@ -612,10 +696,22 @@ static void GameWindow_Render(void)
     BackPat(&qd.white);
     DrawStandardFrame(sWindow);
 
-    /* Display area: black background */
-    BackColor(blackColor);
-    BackPat(&qd.black);
-    EraseRect(&sDisplayRect);
+    /* Play area background. Not black: with a colour port QuickDraw fills from
+     * the pen pattern, so a dark background plus dark fills made the entire
+     * view a black rectangle. White pattern + RGB background colour gives a
+     * solid tint on colour displays and white on 1-bit ones. */
+    DetectColor();
+    if (sHasColor) {
+        /* EraseRect fills with the *background* colour through the pattern, so
+         * that is the pair to set: RGBForeColor/PaintRect painted white. */
+        RGBBackColor(Texture_SkyColor());
+        BackPat(&qd.white);
+        EraseRect(&sDisplayRect);
+    }
+    else {
+        ForeColor(blackColor);
+        FillRect(&sDisplayRect, &qd.ltGray);
+    }
 
     /* World blocks (nothing to do when only the selector strip was dirty) */
     if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
@@ -791,4 +887,29 @@ void GameWindow_Idle(void)
     }
 
     FlushDirty();
+}
+
+/* ---------------------------------------------------------------- */
+/* Test hooks (see src/selftest.c)                                   */
+/* ---------------------------------------------------------------- */
+
+Boolean GameWindow_ClickForTest(short localX, short localY, Boolean shiftDown)
+{
+    Point pt;
+
+    pt.h = localX;
+    pt.v = localY;
+    return GameWindow_HandleContentClick(pt, shiftDown);
+}
+
+Boolean GameWindow_KeyForTest(char key)
+{
+    return GameWindow_HandleKeyDown(key);
+}
+
+void GameWindow_StateForTest(short *camX, short *camY, short *blockType)
+{
+    if (camX != NULL) *camX = sCamX;
+    if (camY != NULL) *camY = sCamY;
+    if (blockType != NULL) *blockType = sBlockType;
 }

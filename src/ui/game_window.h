@@ -27,4 +27,10 @@ void GameWindow_Idle(void);
 /* Toggle between block types */
 void GameWindow_ToggleBlockType(void);
 
+/* Test hooks used by src/selftest.c: same code paths a real click and a real
+   arrow key take, without going through the event queue. */
+Boolean GameWindow_ClickForTest(short localX, short localY, Boolean shiftDown);
+Boolean GameWindow_KeyForTest(char key);
+void    GameWindow_StateForTest(short *camX, short *camY, short *blockType);
+
 #endif /* GAME_WINDOW_H */

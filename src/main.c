@@ -11,6 +11,7 @@
 
 #include "constants.h"
 #include "error.h"
+#include "selftest.h"
 /* Removed sound include */
 #include "ui/event.h"
 #include "ui/menu.h"
@@ -85,6 +86,11 @@ int main(void)
     if (!WindowManager_Initialize()) {
         HandleError(kErrWindowCreation, kCtxLaunchingApp, true); /* Fatal error */
         return 1; /* Should never reach here due to fatal error */
+    }
+
+    /* A harness can ask the game to exercise itself and quit; see selftest.c. */
+    if (SelfTest_Requested()) {
+        SelfTest_Run(); /* does not return */
     }
 
     /*----------------------------------------

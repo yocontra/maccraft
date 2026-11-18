@@ -357,6 +357,34 @@ MODIFIERS = {
 }
 
 
+QUIET = os.environ.get("MAC_EMU_QUIET", "1") != "0"
+
+
+def emulator_pid():
+    """PID of the running SheepShaver, from the session file, if any."""
+    try:
+        with open(SESSION_PATH, "r", encoding="utf-8") as fh:
+            proc = json.load(fh).get("proc")
+        return int(proc) if proc else None
+    except Exception:
+        return None
+
+
+def post_event(event):
+    """Deliver an event to the emulator without raising its window.
+
+    At the HID tap events go to the frontmost window, so the harness would have
+    to raise SheepShaver and steal the focus of whoever is using this Mac.
+    MAC_EMU_QUIET=0 restores the old behaviour.
+    """
+    Q = quartz()
+    pid = emulator_pid() if QUIET else None
+    if pid is not None:
+        Q.CGEventPostToPid(pid, event)
+    else:
+        Q.CGEventPost(Q.kCGHIDEventTap, event)
+
+
 def _event_source():
     Q = quartz()
     return Q.CGEventSourceCreate(Q.kCGEventSourceStateHIDSystemState)
@@ -432,7 +460,7 @@ def _focus(win):
     source = _event_source()
     for etype in (Q.kCGEventMouseMoved, Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp):
         ev = Q.CGEventCreateMouseEvent(source, etype, (x, y), Q.kCGMouseButtonLeft)
-        Q.CGEventPost(Q.kCGHIDEventTap, ev)
+        post_event(ev)
         time.sleep(0.03)
 
 
@@ -442,13 +470,13 @@ def click_at(win, gx, gy, shift=False):
     flags = _flags(["shift"]) if shift else 0
     source = _event_source()
     move = Q.CGEventCreateMouseEvent(source, Q.kCGEventMouseMoved, (hx, hy), Q.kCGMouseButtonLeft)
-    Q.CGEventPost(Q.kCGHIDEventTap, move)
+    post_event(move)
     time.sleep(0.05)
     for etype in (Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp):
         ev = Q.CGEventCreateMouseEvent(source, etype, (hx, hy), Q.kCGMouseButtonLeft)
         if flags:
             Q.CGEventSetFlags(ev, flags)
-        Q.CGEventPost(Q.kCGHIDEventTap, ev)
+        post_event(ev)
         time.sleep(0.05)
 
 
@@ -456,16 +484,15 @@ def dblclick_at(win, gx, gy):
     Q = quartz()
     hx, hy = guest_to_host(win, gx, gy)
     source = _event_source()
-    Q.CGEventPost(
-        Q.kCGHIDEventTap,
-        Q.CGEventCreateMouseEvent(source, Q.kCGEventMouseMoved, (hx, hy), Q.kCGMouseButtonLeft),
+    post_event(
+        Q.CGEventCreateMouseEvent(source, Q.kCGEventMouseMoved, (hx, hy), Q.kCGMouseButtonLeft)
     )
     time.sleep(0.05)
     for count in (1, 2):
         for etype in (Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp):
             ev = Q.CGEventCreateMouseEvent(source, etype, (hx, hy), Q.kCGMouseButtonLeft)
             Q.CGEventSetIntegerValueField(ev, Q.kCGMouseEventClickState, count)
-            Q.CGEventPost(Q.kCGHIDEventTap, ev)
+            post_event(ev)
             time.sleep(0.03)
 
 
@@ -622,9 +649,8 @@ def cmd_move(args, session):
     gx, gy = resolve_target(args, "move <region|point|X Y>")
     hx, hy = guest_to_host(win, gx, gy)
     source = _event_source()
-    Q.CGEventPost(
-        Q.kCGHIDEventTap,
-        Q.CGEventCreateMouseEvent(source, Q.kCGEventMouseMoved, (hx, hy), Q.kCGMouseButtonLeft),
+    post_event(
+        Q.CGEventCreateMouseEvent(source, Q.kCGEventMouseMoved, (hx, hy), Q.kCGMouseButtonLeft)
     )
     time.sleep(0.2)
     print("move %d,%d" % (gx, gy))
@@ -932,6 +958,11 @@ def launch_emulator(assets, vm_dir):
         log = open(log_path, "ab")
         log.write(("\n=== launch form %s: %s ===\n" % (form, " ".join(args))).encode())
         log.flush()
+        # Keep the guest window in a corner rather than the middle of the
+        # screen: this runs on a machine somebody is working on.
+        env = os.environ.copy()
+        env.setdefault("SDL_VIDEO_WINDOW_POS",
+                       os.environ.get("MAC_EMU_WINDOW_POS", "20,60"))
         proc = subprocess.Popen(
             args,
             cwd=WORK,
@@ -939,6 +970,7 @@ def launch_emulator(assets, vm_dir):
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
+            env=env,
         )
         win = wait_for_window(timeout=25.0)
         if win is not None:

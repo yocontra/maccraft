@@ -23,6 +23,7 @@ endif()
 # Set source and resource files
 set(SRC_C
     src/main.c
+    src/selftest.c
     src/ui/menu.c
     src/ui/event.c
     src/error.c
@@ -33,11 +34,13 @@ set(SRC_C
     src/ui/utils.c
     src/game/world.c
     src/game/iso.c
+    src/game/texture.c
 )
 set(HEADER_FILES
     src/ui/menu.h
     src/ui/event.h
     src/error.h
+    src/selftest.h
     src/constants.h
     src/ui/splash_window.h
     src/ui/game_window.h
@@ -46,6 +49,7 @@ set(HEADER_FILES
     src/ui/utils.h
     src/game/world.h
     src/game/iso.h
+    src/game/texture.h
 )
 set(RESOURCE_FILES
     src/main.r

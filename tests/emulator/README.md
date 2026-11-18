@@ -1,5 +1,24 @@
 # Emulator tests (T2)
 
+## Two ways to run this, and why the second one exists
+
+**`selftest.sh` — input-free, the default.** The game looks for
+`MacCraft selftest` in the guest's `System Folder:Preferences` at startup; when
+it is there it drives its own click and key handlers (place a block, remove it,
+pan, change the selected block), writes `MacCraft selftest log` and quits. The
+harness boots, waits, quits and reads the log. No input events, so **the cursor
+of whoever is using this Mac never moves**.
+
+**`capture.sh` — input-free screenshots** (`CGWindowListCreateImage`, read
+only):
+
+```
+tests/emulator/capture.sh 90 3
+```
+
+The scenario scripts post real mouse and keyboard events; they work for this
+app but they do move the cursor, so use them only when the Mac is free.
+
 These tests boot a real Mac OS 9 system under SheepShaver, launch the built
 MacCraft application from `System Folder/Startup Items`, drive it with synthetic
 mouse and keyboard events, and assert on the pixels and on OCR text. Nothing

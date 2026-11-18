@@ -328,6 +328,22 @@ CREATOR=$(/usr/bin/GetFileInfo -c "$STARTUP/MacCraft" 2>/dev/null | tr -d '"' ||
 [ "$CREATOR" = "MCft" ] || die "installed file has creator '$CREATOR', expected MCft"
 echo "make_vm: installed MacCraft (APPL/MCft) into 'System Folder/Startup Items'"
 
+# In-guest self-test: the game looks for this file at startup and, if it is
+# there, drives its own handlers, writes a log beside it and quits. No input
+# events, so the harness never touches the real mouse or keyboard.
+# Either the environment or a marker file asks for it, so a scenario runner that
+# builds the VM in a subprocess with its own environment can still request it.
+SELFTEST_NAME=${APP_NAME:-$(basename "$APP" .APPL)}
+if [ "${MAC_EMU_SELFTEST:-0}" = "1" ] || [ -f "$WORK/request-selftest" ]; then
+    PREFSDIR="$MNT/System Folder/Preferences"
+    mkdir -p "$PREFSDIR"
+    : > "$PREFSDIR/$SELFTEST_NAME selftest"
+    [ -f "$PREFSDIR/$SELFTEST_NAME selftest" ] || die "could not create the selftest trigger"
+    echo "make_vm: selftest trigger in System Folder:Preferences"
+else
+    rm -f "$MNT/System Folder/Preferences/$SELFTEST_NAME selftest" 2>/dev/null || true
+fi
+
 trap - EXIT HUP INT TERM
 diskutil unmount force "$MNT" >/dev/null 2>&1 \
     || hdiutil detach "$MNT" -force >/dev/null 2>&1 \
