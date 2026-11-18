@@ -42,6 +42,8 @@ jobs:
       - name: Package
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq hfsutils
+          # dist/ was created by the build container as root.
+          sudo chown -R "$(id -u):$(id -g)" dist
           hmount dist/MacCraft.dsk
           hdir -a | tee /tmp/hdir.txt
           humount
