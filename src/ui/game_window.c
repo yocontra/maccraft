@@ -158,7 +158,7 @@ void GameWindow_Initialize(void)
             (short)(sContentRect.bottom - kWindowMargin));
 
     /* Play area above it. */
-    SetRect(&sDisplayRect, kGameViewMargin, kGameViewMargin,
+    SetRect(&sDisplayRect, kGameViewMargin, kGameViewMargin + kGameTitleStripHeight,
             (short)(sContentRect.right - kGameViewMargin),
             (short)(sBlockSelectorRect.top - kGameViewMargin));
 
@@ -487,7 +487,7 @@ static void DrawBlockSelector(void)
         FrameRect(&blockRect);
 
         if (sHasColor) {
-            RGBForeColor(Texture_BaseColor((BlockID)(i + 1), 0));
+            RGBForeColor(Texture_BaseColor((BlockID)(i + 1), 1));
             PenPat(&qd.black);
         }
         else {
@@ -680,6 +680,98 @@ static void GameWindow_HandleActivate(Boolean becomingActive)
     MarkDirty(&sWindow->portRect);
 }
 
+/* "MacCraft" on the left, block and camera readout on the right. */
+static void DrawTitleStrip(void)
+{
+    Rect strip;
+    Str255 text;
+    short i, len;
+    short centreX, centreY;
+
+    strip = sWindow->portRect;
+    strip.top    = kGameViewMargin;
+    strip.bottom = sDisplayRect.top - 1;
+    strip.left   = sDisplayRect.left;
+    strip.right  = sDisplayRect.right;
+
+    /* A hairline under the strip, then the two labels. */
+    PenNormal();
+    ForeColor(blackColor);
+    MoveTo(strip.left, strip.bottom);
+    LineTo(strip.right, strip.bottom);
+
+    TextFont(kFontIDGeneva);
+    TextSize(9);
+
+    TextFace(bold);
+    MoveTo(strip.left + 2, strip.top + 11);
+    DrawString("\pMacCraft");
+
+    /* Tile under the middle of the play area. */
+    if (!Iso_Unproject((short)((sDisplayRect.right - sDisplayRect.left) / 2),
+                       (short)((sDisplayRect.bottom - sDisplayRect.top) / 2),
+                       sCamX, sCamY, &centreX, &centreY)) {
+        centreX = 0;
+        centreY = 0;
+    }
+
+    /* "block: grass  cam: 24,24" built by hand: no sprintf on the 68000. */
+    len = 0;
+    text[len++] = 7;
+    {
+        const char *label = "block: ";
+        short n = 0;
+
+        while (label[n] != '\0' && len < 200) {
+            text[++len] = (unsigned char)label[n++];
+        }
+        /* text[0] holds the length; start it at 7 once the label is in. */
+    }
+    text[0] = 7;
+    {
+        const char *names[4] = {"dirt", "dirt", "stone", "grass"};
+        const char *name = names[sBlockType < 0 || sBlockType > 2 ? 0 : sBlockType + 1];
+        short n = 0;
+
+        while (name[n] != '\0' && len < 200) {
+            text[++len] = (unsigned char)name[n++];
+        }
+    }
+    {
+        const char *tail = "  cam: ";
+        short n = 0;
+
+        while (tail[n] != '\0' && len < 200) {
+            text[++len] = (unsigned char)tail[n++];
+        }
+    }
+    {
+        Str255 num;
+
+        NumToString(centreX, num);
+        for (i = 1; i <= num[0] && len < 200; i++) {
+            text[++len] = num[i];
+        }
+        text[++len] = ',';
+        NumToString(centreY, num);
+        for (i = 1; i <= num[0] && len < 200; i++) {
+            text[++len] = num[i];
+        }
+    }
+    text[++len] = ',';
+    text[++len] = ' ';
+    text[len] = '\0';
+    text[0] = (unsigned char)(len - 1);
+    /* drop the trailing ", " */
+    text[0] = (unsigned char)(text[0] - 2);
+
+    TextFace(normal);
+    MoveTo((short)(strip.right - StringWidth(text) - 2), strip.top + 11);
+    DrawString(text);
+
+    TextFace(normal);
+}
+
 /* Render the game window contents. Only called between BeginUpdate/EndUpdate. */
 static void GameWindow_Render(void)
 {
@@ -754,6 +846,8 @@ static void GameWindow_Render(void)
     strip = sWindow->portRect;
     strip.top = sDisplayRect.bottom;
     EraseRect(&strip);
+
+    DrawTitleStrip();
 
     /* Display frame, then the selector on top of any remaining spill. */
     PenNormal();

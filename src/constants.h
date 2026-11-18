@@ -94,7 +94,12 @@ enum {
 #endif
 
 /* UI layout constants */
-enum { kWindowMargin = 10, kGameViewMargin = 10, kGameBlockSelectorHeight = 40 };
+enum {
+    kWindowMargin            = 10,
+    kGameViewMargin          = 10,
+    kGameBlockSelectorHeight = 40,
+    kGameTitleStripHeight    = 16   /* "MacCraft" + block/camera readout */
+};
 
 /* Game view constants. Block ids are 1-based (0 = empty): the selected swatch
  * index sBlockType maps to block id sBlockType + 1. */
