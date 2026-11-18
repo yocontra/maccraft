@@ -30,8 +30,6 @@ enum {
 
     /* Window resource IDs */
     kAboutBoxID   = 128,
-    kMainWindowID = 129,
-    kGameWindowID = 130,
 
     /* Button resource ID and value */
     kStartGameBtn = 128
@@ -97,6 +95,17 @@ enum {
 
 /* UI layout constants */
 enum { kWindowMargin = 10, kGameViewMargin = 10, kGameBlockSelectorHeight = 40 };
+
+/* Game view constants. Block ids are 1-based (0 = empty): the selected swatch
+ * index sBlockType maps to block id sBlockType + 1. */
+enum {
+    kGameNumBlockTypes      = 3,
+    kGameBlockSwatchSize    = 24,
+    kGameBlockSwatchSpacing = 12,
+    kGameCameraPanX         = 16, /* one iso tile step horizontally */
+    kGameCameraPanY         = 8,  /* one iso tile step vertically */
+    kGameCameraLimit        = 2048
+};
 
 /*********************************************************************
  * GLOBAL VARIABLES

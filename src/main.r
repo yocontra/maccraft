@@ -43,46 +43,34 @@ resource 'MBAR' (128) {
     { 128, 129, 130 };
 };
 
-/* String resources */
-resource 'STR#' (128) {
+/* About box - modal dialog */
+resource 'DLOG' (128) {
+    {80, 60, 300, 460},
+    dBoxProc,
+    visible,
+    noGoAway,
+    0,
+    128,
+    "About MacCraft",
+    noAutoCenter
+};
+
+resource 'DITL' (128) {
     {
-        "MacCraft";
+        {180, 150, 200, 250},
+        Button { enabled, "OK" };
+
+        {10, 10, 150, 390},
+        StaticText { enabled,
+            "MacCraft\r\r"
+            "A 3D voxel game for classic Macintosh.\r\r"
+            "Build and explore in a lightweight block-based\r"
+            "construction game for 68K Macs.\r\r"
+            "Shift-click a column to remove a block." };
+
+        {150, 10, 172, 390},
+        StaticText { enabled, "Version ^0" };
     }
-};
-
-/* About box text */
-data 'TEXT' (128) {
-    "MacCraft\r\r"
-    "A 3D voxel game for classic Macintosh\r\r"
-    "Build and explore in this lightweight block-based construction game designed specifically for 68K Macintosh computers.\r\r"
-    "Press Cmd-N to start a new game."
-};
-
-/* About box window */
-resource 'WIND' (128) {
-    {40, 40, 260, 360}, altDBoxProc;
-    invisible;
-    noGoAway;
-    0, "";
-    noAutoCenter;
-};
-
-/* Main application window */
-resource 'WIND' (129) {
-    {40, 40, 640, 480}, documentProc;
-    visible;
-    goAway;
-    0, "MacCraft";
-    centerMainScreen;
-};
-
-/* Game window */
-resource 'WIND' (130) {
-    {50, 50, 640, 480}, documentProc;
-    visible;
-    goAway;
-    0, "MacCraft - Game";
-    centerMainScreen;
 };
 
 /* Error alert */
@@ -102,126 +90,19 @@ resource 'DITL' (200) {
     {
         {70, 250, 90, 310},
         Button { enabled, "OK" };
-        
-        {10, 10, 60, 310},
+
+        {8, 10, 40, 290},
         StaticText { enabled, "^0" };
-    }
-};
 
-/* Application icon */
-resource 'ICON' (128) {
-    /* 32x32 1-bit icon for MacCraft - cube */
-    $"0000 0000 0000 0000"
-    $"0000 0000 0000 0000"
-    $"0000 0000 0000 0000"
-    $"0000 FFFF FFFF 0000"
-    $"0000 FFFF FFFF 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 F000 000F 0000"
-    $"0000 FFFF FFFF 0000"
-    $"0000 FFFF FFFF 0000"
-    $"0000 0000 0000 0000"
-    $"0000 0000 0000 0000"
-    $"0000 0000 0000 0000"
-    $"0000 0000 0000 0000"
-};
-
-/* Application icon for Finder */
-resource 'ICN#' (128) {
-    {
-        /* 32x32 icon */
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 F000 000F 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000",
-        
-        /* Mask */
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 FFFF FFFF 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
-        $"0000 0000 0000 0000"
+        {40, 10, 66, 290},
+        StaticText { enabled, "^1" };
     }
 };
 
 /* Memory allocation */
 resource 'SIZE' (-1) {
     reserved,
-    acceptSuspendResumeEvents,
+    ignoreSuspendResumeEvents,
     reserved,
     canBackground,
     doesActivateOnFGSwitch,
@@ -229,7 +110,7 @@ resource 'SIZE' (-1) {
     dontGetFrontClicks,
     ignoreChildDiedEvents,
     is32BitCompatible,
-    isHighLevelEventAware,
+    notHighLevelEventAware,
     onlyLocalHLEvents,
     notStationeryAware,
     dontUseTextEditServices,

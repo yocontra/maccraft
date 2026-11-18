@@ -1,0 +1,44 @@
+# SheepShaver prefs for the disposable MacCraft test VM.
+#
+# vm/make_vm.sh renders this template into tests/emulator/.work/Test.sheepvm/prefs,
+# substituting:
+#   @DISK@   absolute path to the APFS clone of the Mac OS 9 boot volume
+#   @SHARE@  absolute path to tests/emulator/.work/share (the only extfs export)
+#
+# The defaults below are copied from the provisioned
+# ~/Library/Application Support/MacOS9/MacOS.sheepvm/prefs, minus the user's
+# own disk/extfs paths.  The guest screen is 1024x768, which is what
+# scenarios/coords.json is measured against.
+
+disk @DISK@
+rom Mac OS ROM
+
+ether slirp
+screen win/1024/768
+ramsize 1073741824
+extfs @SHARE@
+title Mac OS 9 Test
+
+windowmodes 0
+screenmodes 0
+seriala null
+serialb null
+bootdrive 0
+bootdriver 0
+frameskip 0
+gfxaccel true
+nocdrom true
+nonet false
+nosound true
+nogui false
+noclipconversion false
+ignoresegv true
+ignoreillegal true
+jit true
+jit68k false
+hotkey 3
+keyboardtype 2
+keycodes false
+mousewheelmode 1
+mousewheellines 3
+idlewait true

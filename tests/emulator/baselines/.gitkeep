@@ -1,0 +1,4 @@
+# Baselines are recorded frames, one PNG per asserted screen.
+# Record them on this Mac with:
+#   tests/emulator/run.sh 01-launch --record
+# then review the images and commit launch.png / game.png here.

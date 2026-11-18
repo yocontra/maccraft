@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Apple Universal Interfaces
+        run: |
+          set -euo pipefail
+          mkdir -p ial
+          curl -sSL -o /tmp/ial.tgz \
+            "https://codeload.github.com/brunocastello/Gateway/tar.gz/1a2dfe8bbd8251c52fad67de03bd3dc1d52f2688"
+          tar xzf /tmp/ial.tgz -C ial --strip-components=2 \
+            Gateway-1a2dfe8bbd8251c52fad67de03bd3dc1d52f2688/third_party/InterfacesAndLibraries
+          test -f ial/Interfaces/CIncludes/OpenTransport.h
+          test -f ial/Libraries/Libraries/Interface.o
+
+      - name: Host tests
+        run: bash tests/host/run.sh
+
+      - name: Build in Retro68 image
+        run: |
+          docker run --rm -v "$PWD:/root/work" -w /root/work \
+            -e APP_VERSION_STR="${{ github.ref_name }}" \
+            ghcr.io/autc04/retro68 bash -lc 'make build APP_NAME=MacCraft IAL_DIR=/root/work/ial'
+
+      - name: Package
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq hfsutils
+          hmount dist/MacCraft.dsk
+          hdir -a | tee /tmp/hdir.txt
+          humount
+          grep -qE '^ *f +APPL/MCft +[1-9][0-9]* +0 ' /tmp/hdir.txt
+          git clone --depth 1 https://github.com/thecloudexpanse/sit /tmp/sit-src
+          make -C /tmp/sit-src
+          mkdir -p pack
+          # Retro68 puts the whole application in the resource fork and leaves
+          # the data fork empty: MacCraft.ad is that empty data fork and
+          # %MacCraft.ad is the AppleDouble carrying the resource fork. StuffIt
+          # reads the pair as one Mac file.
+          cp dist/MacCraft.ad pack/MacCraft
+          cp "dist/%MacCraft.ad" pack/._MacCraft
+          /tmp/sit-src/sit -T APPL -C MCft -o "dist/MacCraft-${{ github.ref_name }}-68k.sit" pack/MacCraft
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maccraft-68k
+          path: dist/*
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "MacCraft $GITHUB_REF_NAME" --generate-notes

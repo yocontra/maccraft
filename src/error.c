@@ -11,46 +11,88 @@
  * ERROR HANDLING FUNCTIONS
  *********************************************************************/
 
+/* Build "<context> (error N)" into a Str255 so the alert always shows both
+ * where the failure happened and which error code caused it. */
+static void MakeContextText(short errorCode, short contextID, Str255 out)
+{
+    const char *base;
+    Str255 number;
+    short len = 0;
+    short i;
+
+    switch (contextID) {
+    case kCtxLaunchingApp:
+        base = "Error launching app";
+        break;
+    case kCtxCreatingMainWindow:
+        base = "Error creating main window";
+        break;
+    case kCtxCreatingButton:
+        base = "Error creating button";
+        break;
+    case kCtxShowingAboutBox:
+        base = "Error showing about box";
+        break;
+    case kCtxAboutBoxText:
+        base = "Error loading about box text";
+        break;
+    case kCtxOpeningGameWindow:
+        base = "Error opening game window";
+        break;
+    case kCtxQuittingApplication:
+        base = "Quitting application";
+        break;
+    default:
+        base = "Unknown error occurred";
+        break;
+    }
+
+    NumToString(errorCode, number);
+
+    while (*base != '\0' && len < 200) {
+        out[1 + len] = *base++;
+        len++;
+    }
+
+    if (len < 200) {
+        out[1 + len] = ' ';
+        len++;
+        out[1 + len] = '(';
+        len++;
+    }
+
+    for (i = 1; i <= number[0] && len < 250; i++) {
+        out[1 + len] = number[i];
+        len++;
+    }
+
+    if (len < 250) {
+        out[1 + len] = ')';
+        len++;
+    }
+
+    out[0] = (unsigned char)len;
+}
+
 /* Error handling function with alert dialog and optional fatal exit */
 void HandleError(short errorCode, short contextID, Boolean fatal)
 {
+    Str255 contextText;
+    ConstStr255Param fatalText;
+
     /* Double beep to alert the user of an error */
     SysBeep(10);
     SysBeep(20);
 
-    /* Display simple note alert with error info */
-    switch (contextID) {
-    case kCtxLaunchingApp:
-        ParamText("\pError launching app", "\p", "\p", "\p");
-        break;
-    case kCtxCreatingMainWindow:
-        ParamText("\pError creating main window", "\p", "\p", "\p");
-        break;
-    case kCtxCreatingButton:
-        ParamText("\pError creating button", "\p", "\p", "\p");
-        break;
-    case kCtxShowingAboutBox:
-        ParamText("\pError showing about box", "\p", "\p", "\p");
-        break;
-    case kCtxAboutBoxText:
-        ParamText("\pError loading about box text", "\p", "\p", "\p");
-        break;
-    case kCtxOpeningGameWindow:
-        ParamText("\pError opening game window", "\p", "\p", "\p");
-        break;
-    case kCtxQuittingApplication:
-        ParamText("\pQuitting application", "\p", "\p", "\p");
-        break;
-    default:
-        ParamText("\pUnknown error occurred", "\p", "\p", "\p");
-        break;
-    }
+    /* Item 1 of the dialog carries the context plus the numeric error code;
+     * item 2 carries the fatal warning when present. */
+    MakeContextText(errorCode, contextID, contextText);
+    fatalText = fatal ? (ConstStr255Param) "\pFatal error: the application will exit."
+                      : (ConstStr255Param) "\p";
 
-    /* Display the alert */
+    ParamText(contextText, fatalText, "\p", "\p");
+
     if (fatal) {
-        /* For fatal errors, show a different kind of alert */
-        ParamText("\pThis is a fatal error. The application will exit when you click OK.", "\p",
-                  "\p", "\p");
         StopAlert(200, NULL);
 
         /* For fatal errors, it's safer to use ExitToShell directly

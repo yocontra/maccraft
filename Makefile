@@ -1,66 +1,99 @@
-.PHONY: build clean run format lint
+.DEFAULT_GOAL := build
 
-# Default values
-RETRO68_PATH ?= ~/Projects/macintosh/Retro68-build
-USE_BASILISK ?= OFF
+.PHONY: build debug-build run debug-run clean format lint check-toolchain universal
+
+# Retro68 build tree. The official Docker image ships one at /Retro68-build.
+RETRO68_PATH ?= /Retro68-build
 APP_NAME ?= App
 
-# Get absolute path by expanding tilde
-ABSOLUTE_PATH := $(shell echo $(RETRO68_PATH) | sed 's:^~:$(HOME):')
+# Apple's Universal Interfaces. Retro68's bundled Multiversal set has no
+# Controls.h, Lists.h or Scrap.h, so the whole application is built against
+# Universal; the staging script links it into the toolchain globally.
+IAL_DIR ?= $(HOME)/Documents/SendToMacOS9/MPW/MPW-GM+PR+Final Updates/Interfaces&Libraries
 
-# Automatically construct paths
-TOOLCHAIN_PATH = $(ABSOLUTE_PATH)/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake
-LAUNCH_APPL = $(ABSOLUTE_PATH)/toolchain/bin/LaunchAPPL
+TOOLCHAIN = $(RETRO68_PATH)/toolchain
+TOOLCHAIN_PATH = $(TOOLCHAIN)/m68k-apple-macos/cmake/retro68.toolchain.cmake
+LAUNCH_APPL = $(TOOLCHAIN)/bin/LaunchAPPL
+STAGE_SCRIPT = $(RETRO68_PATH)/bin/interfaces-and-libraries.sh
 
-# Source files
-SOURCES := $(shell find src -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hpp")
-
-# Configure CMake options
 CMAKE_OPTS = -DCMAKE_TOOLCHAIN_FILE=$(TOOLCHAIN_PATH) \
-             -DUSE_MINIVMAC=$(shell if [ "$(USE_BASILISK)" = "ON" ]; then echo OFF; else echo ON; fi) \
              -DAPP_NAME=$(APP_NAME) \
-             -DLAUNCH_APPL=$(LAUNCH_APPL)
+             -DLAUNCH_APPL=$(LAUNCH_APPL) \
+             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
-build:
-	mkdir -p build
-	cd build && cmake .. $(CMAKE_OPTS) && cmake --build .
-	cp build/$(APP_NAME).{dsk,bin} dist
+check-toolchain:
+	@if [ ! -f "$(TOOLCHAIN_PATH)" ]; then \
+		echo "error: Retro68 toolchain not found at $(TOOLCHAIN_PATH)"; \
+		echo "       Set RETRO68_PATH to a Retro68 build tree, e.g."; \
+		echo "       make build RETRO68_PATH=\$$HOME/Projects/Retro68/build"; \
+		exit 1; \
+		fi
+
+universal: check-toolchain
+	@test -f "$(IAL_DIR)/Interfaces/CIncludes/OpenTransport.h" || { \
+		echo "error: Apple's Universal Interfaces not found at $(IAL_DIR)"; \
+		echo "       Set IAL_DIR=... (it must contain Interfaces/CIncludes and Libraries/Libraries)"; \
+		exit 1; \
+	}
+	$(STAGE_SCRIPT) "$(TOOLCHAIN)" "$(IAL_DIR)" true false false
+	@test -f "$(TOOLCHAIN)/m68k-apple-macos/include/Controls.h" || { \
+		echo "error: staging did not install Controls.h"; \
+		exit 1; \
+	}
+
+build: universal
+	mkdir -p build dist
+	cmake -S . -B build $(CMAKE_OPTS)
+	cmake --build build
+	cp build/$(APP_NAME).dsk dist/$(APP_NAME).dsk
+	cp build/$(APP_NAME).bin dist/$(APP_NAME).bin
+	cp build/$(APP_NAME).APPL dist/$(APP_NAME).APPL
+	cp build/$(APP_NAME).ad dist/$(APP_NAME).ad
+	cp "build/%$(APP_NAME).ad" "dist/%$(APP_NAME).ad"
+
+debug-build: universal
+	mkdir -p build dist
+	cmake -S . -B build $(CMAKE_OPTS) -DCMAKE_BUILD_TYPE=Debug
+	cmake --build build
+	cp build/$(APP_NAME).dsk dist/$(APP_NAME).dsk
+	cp build/$(APP_NAME).bin dist/$(APP_NAME).bin
+	cp build/$(APP_NAME).APPL dist/$(APP_NAME).APPL
+	cp build/$(APP_NAME).ad dist/$(APP_NAME).ad
+	cp "build/%$(APP_NAME).ad" "dist/%$(APP_NAME).ad"
 
 run: build
-	cd build && cmake --build . --target run
+	cmake --build build --target run
+
+debug-run: debug-build
+	cmake --build build --target run
 
 clean:
-	cd build && cmake --build . --target clean || true
-	rm -rf build/* dist/*
+	rm -rf build dist
 
 # Format the code with clang-format
 format:
 	@echo "Formatting code using clang-format..."
 	@command -v clang-format >/dev/null 2>&1 || { echo "clang-format not found, please install it."; exit 1; }
-	@find src -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.hpp" | xargs clang-format -i -style=file
+	@find src \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.hpp" \) -print | xargs clang-format -i -style=file
 	@echo "Formatting complete."
 
 # Run static analysis
-lint:
+lint: universal
 	@echo "Running static analysis..."
-	
-	@# Make sure we have a compilation database for clang-tidy
-	@cd build && cmake .. $(CMAKE_OPTS) -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-	
+	@cmake -S . -B build $(CMAKE_OPTS) -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 	if command -v clang-tidy >/dev/null 2>&1; then \
 		echo "Found clang-tidy, performing deep analysis..."; \
-		for file in $$(find src -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.hpp"); do \
+		for file in $$(find src \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.hpp" \) -print); do \
 			echo "Analyzing $$file"; \
 			clang-tidy "$$file" -p build; \
 		done; \
 		echo ""; \
 	fi
-	
 	@echo "Static analysis complete."
 
 # Usage examples:
 # make build RETRO68_PATH=/path/to/Retro68-build
-# make run USE_BASILISK=ON
-# make build APP_NAME=MyApp
+# make build APP_NAME=MacCraft
+# make run
 # make format
 # make lint

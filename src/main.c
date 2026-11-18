@@ -1,4 +1,5 @@
 #include <Dialogs.h>
+#include <Events.h>
 #include <Fonts.h>
 #include <Memory.h>
 #include <Menus.h>
@@ -39,19 +40,20 @@ int main(void)
     MoreMasters(); /* Allocate additional master pointers for handles */
     MoreMasters(); /* Call twice to ensure plenty of master pointers */
 
-    /* Check available memory early */
-    err = CheckMemory();
-    if (err != noErr) {
-        HandleError(kErrMemoryFull, kCtxLaunchingApp, true); /* Fatal error */
-        return 1; /* Should never reach here due to fatal error */
-    }
-
     InitGraf(&qd.thePort); /* QuickDraw */
     InitFonts();           /* Font Manager */
     InitWindows();         /* Window Manager */
     InitMenus();           /* Menu Manager */
     TEInit();              /* TextEdit */
     InitDialogs(NULL);     /* Dialog Manager */
+
+    /* Check available memory after the Toolbox is initialized */
+    err = CheckMemory();
+    if (err != noErr) {
+        HandleError(kErrMemoryFull, kCtxLaunchingApp, true); /* Fatal error */
+        return 1; /* Should never reach here due to fatal error */
+    }
+
     InitCursor();          /* Set arrow cursor */
 
     /* Clear any pending events */
@@ -80,7 +82,10 @@ int main(void)
     DrawMenuBar();
 
     /* Initialize window manager and default windows */
-    WindowManager_Initialize();
+    if (!WindowManager_Initialize()) {
+        HandleError(kErrWindowCreation, kCtxLaunchingApp, true); /* Fatal error */
+        return 1; /* Should never reach here due to fatal error */
+    }
 
     /*----------------------------------------
      * Main event loop
@@ -93,13 +98,23 @@ int main(void)
 
         /* Placeholder for future audio idle function */
 
-        /* Perform idle processing for active window */
-        WindowManager_Idle();
+        if (WaitNextEvent(everyEvent, &event, 6, NULL)) {
+            /* MenuKey resolves every Cmd-key menu equivalent */
+            if (event.what == keyDown && (event.modifiers & cmdKey)) {
+                long menuCommand = MenuKey(event.message & charCodeMask);
+                if (menuCommand != 0) {
+                    HiliteMenu(0);
+                    DoMenuCommand(menuCommand);
+                    continue;
+                }
+            }
 
-        /* Get and process the next event */
-        if (GetNextEvent(everyEvent, &event)) {
             /* Delegate all event handling to the window manager */
             WindowManager_HandleEvent(&event);
+        }
+        else {
+            /* Perform idle processing when there are no events */
+            WindowManager_Idle();
         }
     }
 

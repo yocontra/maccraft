@@ -5,7 +5,6 @@
 
 #include "../constants.h"
 #include "../error.h"
-#include "about_window.h"
 #include "event.h"
 #include "game_window.h"
 #include "menu.h"
@@ -18,10 +17,24 @@
  */
 
 /* Window modules registration */
-static WindowModule gWindowModules[3];
+static WindowModule gWindowModules[2];
 
 /* Current active window tracking */
 static WindowType gForegroundWindowType = kWindowTypeSplash;
+
+/* The game window module keeps the historical void-returning API; adapt it to
+ * the Boolean module interface so the manager can report creation failures. */
+static Boolean GameModule_Initialize(void)
+{
+    GameWindow_Initialize();
+    return GameWindow_GetWindowRef() != NULL;
+}
+
+static Boolean GameModule_Show(Boolean visible)
+{
+    GameWindow_Show(visible);
+    return visible ? GameWindow_IsVisible() : true;
+}
 
 /* Register window module functions */
 static void RegisterWindowModules(void)
@@ -37,40 +50,37 @@ static void RegisterWindowModules(void)
     gWindowModules[kWindowTypeSplash].visible      = false;
 
     /* Game window */
-    gWindowModules[kWindowTypeGame].initialize   = GameWindow_Initialize;
+    gWindowModules[kWindowTypeGame].initialize   = GameModule_Initialize;
     gWindowModules[kWindowTypeGame].dispose      = GameWindow_Dispose;
-    gWindowModules[kWindowTypeGame].show         = GameWindow_Show;
+    gWindowModules[kWindowTypeGame].show         = GameModule_Show;
     gWindowModules[kWindowTypeGame].handleEvent  = GameWindow_HandleEvent;
     gWindowModules[kWindowTypeGame].getWindowRef = GameWindow_GetWindowRef;
     gWindowModules[kWindowTypeGame].isVisible    = GameWindow_IsVisible;
     gWindowModules[kWindowTypeGame].initialized  = false;
     gWindowModules[kWindowTypeGame].visible      = false;
-
-    /* About window */
-    gWindowModules[kWindowTypeAbout].initialize   = AboutWindow_Initialize;
-    gWindowModules[kWindowTypeAbout].dispose      = AboutWindow_Dispose;
-    gWindowModules[kWindowTypeAbout].show         = AboutWindow_Show;
-    gWindowModules[kWindowTypeAbout].handleEvent  = AboutWindow_HandleEvent;
-    gWindowModules[kWindowTypeAbout].getWindowRef = AboutWindow_GetWindowRef;
-    gWindowModules[kWindowTypeAbout].isVisible    = AboutWindow_IsVisible;
-    gWindowModules[kWindowTypeAbout].initialized  = false;
-    gWindowModules[kWindowTypeAbout].visible      = false;
 }
 
 /* Initialize the window manager and the initial window */
-void WindowManager_Initialize(void)
+Boolean WindowManager_Initialize(void)
 {
     /* Register all window modules first */
     RegisterWindowModules();
 
     /* Initialize splash window as the default view */
-    gWindowModules[kWindowTypeSplash].initialize();
+    if (!gWindowModules[kWindowTypeSplash].initialize()) {
+        return false;
+    }
     gWindowModules[kWindowTypeSplash].initialized = true;
-    gWindowModules[kWindowTypeSplash].show(true);
+
+    if (!gWindowModules[kWindowTypeSplash].show(true)) {
+        return false;
+    }
     gWindowModules[kWindowTypeSplash].visible = true;
 
     /* Set the splash window as foreground */
     gForegroundWindowType = kWindowTypeSplash;
+
+    return true;
 }
 
 /* Dispose all windows and clean up resources */
@@ -79,7 +89,7 @@ void WindowManager_Dispose(void)
     int i;
 
     /* Dispose windows that were initialized */
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 2; i++) {
         if (gWindowModules[i].initialized) {
             gWindowModules[i].dispose();
             gWindowModules[i].initialized = false;
@@ -91,25 +101,34 @@ void WindowManager_Dispose(void)
 /* Open a specific type of window */
 void WindowManager_OpenWindow(WindowType windowType)
 {
+    if (windowType >= 2) {
+        return;
+    }
+
     /* Initialize the window if it hasn't been initialized yet */
     if (!gWindowModules[windowType].initialized) {
-        gWindowModules[windowType].initialize();
+        if (!gWindowModules[windowType].initialize()) {
+            return;
+        }
         gWindowModules[windowType].initialized = true;
     }
 
     /* Show the window */
-    gWindowModules[windowType].show(true);
+    if (!gWindowModules[windowType].show(true)) {
+        return;
+    }
     gWindowModules[windowType].visible = true;
 
-    /* Handle special case for About window (doesn't change foreground) */
-    if (windowType != kWindowTypeAbout) {
-        WindowManager_SetForegroundWindow(windowType);
-    }
+    WindowManager_SetForegroundWindow(windowType);
 }
 
 /* Close a specific type of window */
 void WindowManager_CloseWindow(WindowType windowType)
 {
+    if (windowType >= 2) {
+        return;
+    }
+
     /* Only hide the window if it was initialized */
     if (gWindowModules[windowType].initialized) {
         gWindowModules[windowType].show(false);
@@ -168,7 +187,7 @@ WindowType WindowManager_GetForegroundWindowType(void)
 /* Get window reference for a specific window type */
 WindowRef WindowManager_GetWindowRef(WindowType windowType)
 {
-    if (windowType >= 0 && windowType < 3 && gWindowModules[windowType].initialized) {
+    if (windowType < 2 && gWindowModules[windowType].initialized) {
         return gWindowModules[windowType].getWindowRef();
     }
     return NULL;
@@ -177,7 +196,7 @@ WindowRef WindowManager_GetWindowRef(WindowType windowType)
 /* Check if a window is visible */
 Boolean WindowManager_IsWindowVisible(WindowType windowType)
 {
-    if (windowType >= 0 && windowType < 3 && gWindowModules[windowType].initialized) {
+    if (windowType < 2 && gWindowModules[windowType].initialized) {
         return gWindowModules[windowType].isVisible();
     }
     return false;
@@ -220,10 +239,6 @@ static Boolean HandleStandardWindowOps(EventRecord *event)
                     WindowManager_CloseWindow(kWindowTypeGame);
                     WindowManager_OpenWindow(kWindowTypeSplash);
                 }
-                else if (window == gWindowModules[kWindowTypeAbout].getWindowRef()) {
-                    /* Just close the about window */
-                    WindowManager_CloseWindow(kWindowTypeAbout);
-                }
                 else {
                     DisposeWindow(window);
                 }
@@ -241,56 +256,6 @@ static Boolean HandleStandardWindowOps(EventRecord *event)
             else if (window == gWindowModules[kWindowTypeGame].getWindowRef()) {
                 WindowManager_SetForegroundWindow(kWindowTypeGame);
             }
-            return true;
-        }
-    }
-
-    return false;
-}
-
-/* Handle global key commands */
-static Boolean HandleGlobalKeys(EventRecord *event)
-{
-    char key;
-
-    if (event->what == keyDown && (event->modifiers & cmdKey)) {
-        key = event->message & charCodeMask;
-
-        /* Cmd-N to open game window */
-        if (key == 'n' || key == 'N') {
-            WindowManager_OpenWindow(kWindowTypeGame);
-            WindowManager_CloseWindow(kWindowTypeSplash);
-            return true;
-        }
-
-        /* Cmd-W to close window */
-        else if (key == 'w' || key == 'W') {
-            WindowRef window = FrontWindow();
-            if (window) {
-                if (GetWindowKind(window) < 0) {
-                    /* Close desk accessory */
-                    CloseDeskAcc(GetWindowKind(window));
-                }
-                else if (window == gWindowModules[kWindowTypeGame].getWindowRef()) {
-                    /* Close game window and switch back to splash mode */
-                    WindowManager_CloseWindow(kWindowTypeGame);
-                    WindowManager_OpenWindow(kWindowTypeSplash);
-                }
-                else if (window == gWindowModules[kWindowTypeSplash].getWindowRef()) {
-                    /* Closing main window quits app */
-                    QuitApplication(false);
-                }
-                else {
-                    /* Other window */
-                    DisposeWindow(window);
-                }
-            }
-            return true;
-        }
-
-        /* Cmd-Q to quit application */
-        else if (key == 'q' || key == 'Q') {
-            QuitApplication(false);
             return true;
         }
     }
@@ -332,7 +297,7 @@ static Boolean RouteUpdateEvent(EventRecord *event)
         window = (WindowRef)event->message;
 
         /* Find which window needs updating */
-        for (i = 0; i < 3; i++) {
+        for (i = 0; i < 2; i++) {
             if (window == gWindowModules[i].getWindowRef() && gWindowModules[i].isVisible()) {
                 gWindowModules[i].handleEvent(event);
                 return true;
@@ -346,13 +311,11 @@ static Boolean RouteUpdateEvent(EventRecord *event)
 /* Handle all event types and route to appropriate handler */
 void WindowManager_HandleEvent(EventRecord *event)
 {
+    int i;
+    WindowRef clicked;
+
     /* Handle standard window operations first */
     if (HandleStandardWindowOps(event)) {
-        return;
-    }
-
-    /* Handle global key commands */
-    if (HandleGlobalKeys(event)) {
         return;
     }
 
@@ -364,9 +327,21 @@ void WindowManager_HandleEvent(EventRecord *event)
         return;
     }
 
+    /* Route mouse events to the window that was actually clicked */
+    if (event->what == mouseDown) {
+        FindWindow(event->where, &clicked);
+        for (i = 0; i < 2; i++) {
+            if (clicked == gWindowModules[i].getWindowRef() &&
+                gWindowModules[i].initialized && gWindowModules[i].visible) {
+                gWindowModules[i].handleEvent(event);
+                return;
+            }
+        }
+        return;
+    }
+
     /* Route other events to the foreground window */
-    if (gForegroundWindowType >= 0 && gForegroundWindowType < 3 &&
-        gWindowModules[gForegroundWindowType].initialized &&
+    if (gForegroundWindowType < 2 && gWindowModules[gForegroundWindowType].initialized &&
         gWindowModules[gForegroundWindowType].visible) {
         gWindowModules[gForegroundWindowType].handleEvent(event);
     }

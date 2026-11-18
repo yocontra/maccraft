@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "Guest-screen coordinates for the 1024x768 Mac OS 9 screen.",
+    "Regions are [x, y, width, height] in guest pixels; points are [x, y].",
+    "",
+    "Derivation (all layout is computed at runtime from qd.screenBits in a",
+    "1024x768 guest, so these values are stable):",
+    "",
+    "Splash window (src/ui/splash_window.c): width = 1024*3/4 = 768,",
+    "height = 768*3/4 = 576, centred at x = (1024-768)/2 = 128,",
+    "y = (768-576)/2 = 96. documentProc content starts 1 px inside the left",
+    "edge and 20 px below the top (title bar): content origin (129,116),",
+    "portRect about 766x555. The Start Game button is",
+    "((right-120)/2, 190, (right+120)/2, 215) in port coordinates, i.e. about",
+    "x 323..443, y 190..215, so on the guest screen it is x 452..572,",
+    "y 306..331; the point below is its centre.",
+    "",
+    "Game window (src/ui/game_window.c): width = 1024*4/5 = 819,",
+    "height = 768-80 = 688, at x = (1024-819)/2 = 102, y = 40.",
+    "documentProc content origin is (103,60); portRect is about 817x667.",
+    "sBlockSelectorRect.top = 667-40-10 = 617; sDisplayRect is",
+    "(10,10,807,607) in port coordinates, i.e. (113,70,910,667) on the guest",
+    "screen (797x597). The camera is set so Iso_Project(24,24,0) lands at",
+    "(displayWidth/2, displayHeight/2) = (398,298) display-local ->",
+    "(408,308) port-local -> (511,368) on the guest screen. That is the top",
+    "of the centre block of the 12x12 plateau, so the 'tile' point is the",
+    "diamond centre and 'tile' is a box around that diamond plus its two",
+    "faces (32x16 top face, faces to 16 px below).",
+    "'outside-tile' is a fixed patch in the upper-left of the display that a",
+    "single placed/removed block at the centre can never touch.",
+    "",
+    "If game_window.c or splash_window.c change the window size or display",
+    "rect, re-derive these numbers; nothing else in the harness hard-codes",
+    "window geometry."
+  ],
+  "regions": {
+    "full": [0, 0, 1024, 768],
+    "display": [113, 70, 797, 597],
+    "tile": [483, 348, 56, 52],
+    "outside-tile": [130, 90, 120, 100],
+    "start-button": [452, 306, 120, 26]
+  },
+  "points": {
+    "start": [512, 319],
+    "tile": [511, 368]
+  }
+}

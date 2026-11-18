@@ -6,6 +6,7 @@
 
 #include "../constants.h"
 #include "../error.h"
+#include "about_window.h"
 #include "game_window.h"
 #include "menu.h"
 #include "window_manager.h"
@@ -60,7 +61,7 @@ void DoMenuCommand(long menuCommand)
 
     if (menuID == kMenuApple) {
         if (menuItem == kItemAbout)
-            WindowManager_OpenWindow(kWindowTypeAbout);
+            AboutWindow_Show();
         else {
             GetMenuItemText(GetMenu(128), menuItem, str);
             OpenDeskAcc(str);
@@ -71,9 +72,11 @@ void DoMenuCommand(long menuCommand)
         case kItemNewGame:
             /* This switches between modes */
             if (gAppMode == kModeMainSplash || !WindowManager_IsWindowVisible(kWindowTypeGame)) {
-                /* Open game window and close splash window */
+                /* Open game window and close splash window only on success */
                 WindowManager_OpenWindow(kWindowTypeGame);
-                WindowManager_CloseWindow(kWindowTypeSplash);
+                if (WindowManager_IsWindowVisible(kWindowTypeGame)) {
+                    WindowManager_CloseWindow(kWindowTypeSplash);
+                }
             }
             else {
                 /* Already in game mode, bring window to front */

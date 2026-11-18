@@ -121,7 +121,7 @@ static void DrawSplashWindowUI(WindowPtr window)
 }
 
 /* Initialize and create the splash window */
-void SplashWindow_Initialize(void)
+Boolean SplashWindow_Initialize(void)
 {
     Rect screenRect, windowRect, frameRect, buttonRect;
     short screenWidth, screenHeight;
@@ -130,14 +130,13 @@ void SplashWindow_Initialize(void)
 
     /* Prevent double initialization */
     if (sInitialized) {
-        return;
+        return true;
     }
 
     /* Check available memory */
     err = CheckMemory();
     if (err != noErr) {
-        HandleError(kErrMemoryFull, kCtxCreatingMainWindow, false); /* Non-fatal */
-        return;
+        return false;
     }
 
     /* Calculate screen dimensions */
@@ -159,8 +158,7 @@ void SplashWindow_Initialize(void)
         NewWindow(NULL, &windowRect, "\pMacCraft", true, documentProc, (WindowPtr)-1, true, 0);
 
     if (sWindow == NULL) {
-        HandleError(kErrWindowCreation, kCtxCreatingMainWindow, false); /* Non-fatal */
-        return;
+        return false;
     }
 
     /* Make window visible and active */
@@ -194,6 +192,7 @@ void SplashWindow_Initialize(void)
     InvalRect(&sWindow->portRect);
 
     sInitialized = true;
+    return true;
 }
 
 /* Dispose of the splash window and clean up resources */
@@ -265,14 +264,13 @@ Boolean SplashWindow_HandleContentClick(Point localPt)
     /* Find which control was clicked */
     part = FindControl(localPt, sWindow, &control);
 
-    /* If Start Chat button was clicked */
+    /* If Start Game button was clicked */
     if (part && control == sStartGameButton) {
-        /* Visual feedback */
-        HiliteControl(control, 1); /* Highlight button */
-        Delay(8, NULL);            /* Short delay */
-        HiliteControl(control, 0); /* Return to normal */
-
-        return true; /* Indicate button was clicked */
+        /* TrackControl gives the pressed-button feedback, follows the mouse,
+         * and returns non-zero only when released inside the button. */
+        if (TrackControl(control, localPt, NULL) != 0) {
+            return true; /* Indicate button was clicked */
+        }
     }
 
     return false; /* No button click handled */
@@ -287,13 +285,30 @@ void SplashWindow_HandleEvent(EventRecord *event)
 
     switch (event->what) {
     case mouseDown: {
-        Point mousePt = event->where;
+        WindowRef clicked;
+        short part;
+        Point mousePt;
+        GrafPtr savePort;
+
+        part = FindWindow(event->where, &clicked);
+        if (part != inContent || clicked != sWindow) {
+            break;
+        }
+
+        GetPort(&savePort);
+        SetPort(sWindow);
+
+        mousePt = event->where;
         GlobalToLocal(&mousePt);
         if (SplashWindow_HandleContentClick(mousePt)) {
-            /* If the start game button was clicked, open the game window */
+            /* Only leave the splash screen when the game window exists */
             WindowManager_OpenWindow(kWindowTypeGame);
-            WindowManager_CloseWindow(kWindowTypeSplash);
+            if (WindowManager_IsWindowVisible(kWindowTypeGame)) {
+                WindowManager_CloseWindow(kWindowTypeSplash);
+            }
         }
+
+        SetPort(savePort);
     } break;
 
     case updateEvt:
@@ -315,10 +330,10 @@ WindowRef SplashWindow_GetWindowRef(void)
 }
 
 /* Show or hide the splash window */
-void SplashWindow_Show(Boolean visible)
+Boolean SplashWindow_Show(Boolean visible)
 {
     if (!sInitialized || sWindow == NULL) {
-        return;
+        return false;
     }
 
     if (visible) {
@@ -339,6 +354,8 @@ void SplashWindow_Show(Boolean visible)
         HideWindow(sWindow);
         sIsVisible = false;
     }
+
+    return true;
 }
 
 /* Determine if the window is visible */

@@ -1,14 +1,24 @@
 # Build artifacts
 build/
+dist/
+ial/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-*.cmake
+compile_commands.json
+.cache/
 *.o
 *.a
 *.so
 *.dylib
-dist/
+*.dSYM/
+*.map
+*.rsrc.bin
+
+# Test harness scratch space
+tests/emulator/.work/
+tests/emulator/.venv/
+__pycache__/
 
 # macOS specific
 .DS_Store

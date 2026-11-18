@@ -1,89 +1,96 @@
-![Screenshot 2025-03-31 at 2 32 22 PM](https://github.com/user-attachments/assets/3c4e1323-9598-4fa3-bd50-4446c27acfe4)
-![Screenshot 2025-04-02 at 8 10 08 AM](https://github.com/user-attachments/assets/6d2ed3b9-7d77-4370-90df-d5bf15c6f43c)
-
-
 # MacCraft
 
-A 3D voxel game for classic Macintosh computers running System 7.0.1.
+An isometric block-building game for classic 68k Macintoshes.
 
-## Description
+MacCraft is a small Minecraft-inspired sandbox: a fixed 48 × 48 × 8 world of
+dirt, stone and grass drawn as 32 × 16 isometric tiles, with place and remove
+actions, camera panning and a three-swatch block selector. It is written in C
+against the classic Macintosh Toolbox and compiled with
+[Retro68](https://github.com/autc04/Retro68). There is no 3D hardware and no
+68020-only code: everything is integer 2D QuickDraw, so it runs on a Mac Plus
+or SE as well as a Quadra.
 
-MacCraft is a lightweight game inspired by Minecraft, built specifically for classic Macintosh computers with limited resources. Experience block-based construction and exploration with a SimCity-style rendering approach optimized for 68K processors.
+## Controls
 
-### Key Features
+| Action | Input |
+| --- | --- |
+| Place block | Click an empty column, or the top face of a column |
+| Remove block | Shift-click the top block of a column |
+| Pan camera | Arrow keys or W/A/S/D |
+| Select block | Click a block swatch in the window (dirt, stone, grass) |
+| New game | Cmd-N |
+| Quit | Cmd-Q |
 
-- Block placement and removal
-- Classic Macintosh UI with proper event handling
-- Optimized Isometric rendering for maximum performance
+## Requirements
 
-### Requirements
+- System 7 or later on a 68000 (or better) Macintosh
+- 768 KB of application memory; a 1 MB partition is comfortable
+- No network, no extensions, no System 7.5 features
 
-- [Retro68](https://github.com/autc04/Retro68) toolchain for cross-compiling to classic Mac OS
-- [Mini vMac](https://www.gryphel.com/c/minivmac/) or [Basilisk II](https://basilisk.cebix.net/) for running the application
-- [clang-format](https://clang.llvm.org/docs/ClangFormat.html) and [clang-tidy](https://clang.llvm.org/extra/clang-tidy/) for code formatting and static analysis (optional)
+## Building
 
-### Building and Running
-
-This project uses a simple Makefile for common operations:
-
-```bash
-# Build the application
-make build
-
-# Run the application in Mini vMac
-make run
-
-# Clean build artifacts
-make clean
-
-# Format all C/C++ code
-make format
-
-# Run static analysis on all C/C++ code
-make lint
-```
-
-You can find the output .dsk and .bin files in the `dist/` folder. Simply drag the .dsk file onto your Mini vMac to test.
-
-#### Other Build Parameters
+The build runs inside the upstream Retro68 Docker image, so nothing needs to be
+installed on the host beyond Docker:
 
 ```bash
-# Specify a custom Retro68 build path
-make build RETRO68_PATH=/path/to/Retro68-build
-
-# Use Basilisk II instead of Mini vMac
-make run USE_BASILISK=ON
-
-# Change the application name (default is "App")
-make build APP_NAME=MyApp
-
-# Combine options
-make build RETRO68_PATH=/path/to/Retro68-build USE_BASILISK=ON APP_NAME=MyApp
+docker run --rm -v "$PWD:/root/work" -w /root/work \
+  -e APP_VERSION_STR="$(git describe --tags --always --dirty)" \
+  ghcr.io/autc04/retro68 bash -lc 'make build APP_NAME=MacCraft'
 ```
 
-### Using `make run`
+The application is built against Apple's Universal Interfaces (required —
+Retro68's bundled Multiversal set has no `Controls.h`, `Lists.h` or `Scrap.h`),
+which the Makefile stages from `IAL_DIR`; the stock Retro68 image ships none, so
+`IAL_DIR` must point at a copy. Locally, mount one into the container:
 
-You will need to set up LaunchAPPL.cfg as documented [here](https://github.com/autc04/Retro68/tree/3672e5e663802e1956407065c75d2aff130ae50e?tab=readme-ov-file#launchappl-and-the-test-suite). Currently this supports Mini vMac and Basilisk II (I personally use Mini vMac for simplicity).
-
-This doesn't seem to work super well for Mini vMac at the moment due to how it copies the .app file and Gatekeeper on modern macOS.
-
-### Code Style & Linting
-
-This project uses clang-format and clang-tidy to maintain code quality:
-
-- **clang-format**: A tool to automatically format C/C++ code according to configurable style guides
-- **clang-tidy**: A static analysis tool that provides additional diagnostics beyond what the compiler offers
-
-Configuration files:
-- `.clang-format`: Defines the C/C++ code style (indentation, spacing, etc.)
-- `.clang-tidy`: Defines static analysis rules and checks
-
-You can run the formatting and linting tools through:
-1. Makefile targets: `make format` and `make lint`
-2. CMake targets: `cmake --build build --target format` and `cmake --build build --target lint`
-
-When contributing to this project, please format your code before submitting changes:
 ```bash
-# Format all C/C++ files according to the project style
-make format
+docker run --rm -v "$PWD:/root/work" \
+  -v "$HOME/Documents/SendToMacOS9/MPW/MPW-GM+PR+Final Updates/Interfaces&Libraries:/ial:ro" \
+  -w /root/work \
+  -e APP_VERSION_STR="$(git describe --tags --always --dirty)" \
+  ghcr.io/autc04/retro68 bash -lc 'make build APP_NAME=MacCraft IAL_DIR=/ial'
 ```
+
+CI fetches the same interfaces from a pinned mirror of Apple's set into `ial/`
+(gitignored). Output lands in `dist/`:
+
+- `MacCraft.dsk` — bootable/disk image containing the application
+- `MacCraft.bin` — raw application binary
+- `MacCraft.APPL` — the application with its resource fork
+- `MacCraft.ad` / `%MacCraft.ad` — the empty data fork and the AppleDouble file
+  that carries the resource fork (what the `.sit` step uses)
+
+With a local Retro68 build tree and a local interfaces copy, both can be
+pointed at the host (defaults: `/Retro68-build` and the MPW path above):
+
+```bash
+make build APP_NAME=MacCraft RETRO68_PATH="$HOME/Projects/Retro68/build"
+```
+
+Other targets: `make run` (launch in Mini vMac through `LaunchAPPL -e minivmac`,
+requires a configured `LaunchAPPL.cfg`), `make debug-build`, `make clean`,
+`make format`, `make lint`.
+
+### Tests
+
+```bash
+bash tests/host/run.sh
+```
+
+runs the Toolbox-free unit tests (world bounds, isometric round-trip) on the
+host with AddressSanitizer and UBSan. The emulator scenarios in
+`tests/emulator/` drive a real SheepShaver guest and are run locally on macOS;
+see `tests/emulator/README.md`.
+
+## Download
+
+Tagged builds are published on the
+[Releases](https://github.com/yocontra/maccraft/releases) page. Each release
+carries the `.dsk`, the `.bin` and a `.sit` StuffIt archive with the resource
+fork intact — on a real Mac, download the `.sit` and unstuff it, then copy the
+application to your boot disk. The `.dsk` is convenient for emulators
+(Mini vMac, Basilisk II, SheepShaver).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
