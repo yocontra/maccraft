@@ -23,7 +23,9 @@ jobs:
           mkdir -p ial
           curl -sSL -o /tmp/ial.tgz \
             "https://codeload.github.com/brunocastello/Gateway/tar.gz/1a2dfe8bbd8251c52fad67de03bd3dc1d52f2688"
-          tar xzf /tmp/ial.tgz -C ial --strip-components=2 \
+          # --strip-components=3 drops "Gateway-<sha>/third_party/" so that
+          # ial/ holds CIncludes' parent tree directly (ial/Interfaces/...).
+          tar xzf /tmp/ial.tgz -C ial --strip-components=3 \
             Gateway-1a2dfe8bbd8251c52fad67de03bd3dc1d52f2688/third_party/InterfacesAndLibraries
           test -f ial/Interfaces/CIncludes/OpenTransport.h
           test -f ial/Libraries/Libraries/Interface.o
