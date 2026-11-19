@@ -20,6 +20,7 @@
 #include "game/iso.h"
 #include "game/world.h"
 #include "selftest.h"
+#include "sound/sfx.h"
 #include "ui/game_window.h"
 #include "ui/window_manager.h"
 
@@ -183,6 +184,13 @@ void SelfTest_Run(void)
     Pump(60);
 
     LogLine("game_visible=", NULL, (long)GameWindow_IsVisible(), true);
+    {
+        OSErr err = Sfx_LastError();
+
+        LogLine("sfx_lasterr=", NULL, (long)err, true);
+        Sfx_Play(kSfxPlace);
+        LogLine("sfx_after_play=", NULL, (long)Sfx_LastError(), true);
+    }
     {
         short blocks = 0;
         unsigned long ticks = GameWindow_TimeRender(10, &blocks);

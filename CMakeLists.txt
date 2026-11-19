@@ -35,6 +35,8 @@ set(SRC_C
     src/ui/sprite_sheet.c
     src/game/world.c
     src/game/iso.c
+    src/game/pick.c
+    src/sound/sfx.c
     src/game/texture.c
     src/game/light.c
     src/game/blocks.c
@@ -58,6 +60,8 @@ set(HEADER_FILES
     src/ui/sprite_sheet.h
     src/game/world.h
     src/game/iso.h
+    src/game/pick.h
+    src/sound/sfx.h
     src/game/texture.h
     src/game/light.h
     src/game/blocks.h

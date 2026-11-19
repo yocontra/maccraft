@@ -61,3 +61,25 @@ and lighting, so 83% of a frame is the pixel copy. Getting further means writing
 fewer pixels -- a screen-space cache of the last frame, or 32-bit preconverted
 sprite bands (which cost 344 KB of static data) -- not more micro-optimisation of
 the loop that is already one load, one table lookup and one store per pixel.
+
+## Interaction and sound
+
+- The tile under the mouse is picked on the surface you can see, not by
+  unprojecting the ground plane: `game/pick.c` searches the columns within
+  `kWorldZ` tiles of the ground candidate and hit-tests each one's top-face
+  diamond, so clicking a hill acts on the hill. `test_pick` proves it against a
+  flat area, a three-level stack and a tall column behind a short one.
+- The selection box, the status strip and the click all read that same pick, so
+  what is highlighted is what a click acts on. Moving between cells invalidates
+  only the two selection-box rectangles.
+- The HUD (crosshair, held block) is drawn through the sprite pixel path. Every
+  QuickDraw route for it failed on this port: `PaintRect` draws nothing inside
+  the play area, and `FillRect` is at the mercy of the update clip while the
+  world's pixels are written directly. `Sprite_FillRect` is the one primitive
+  that always lands.
+- Sound: `sound/sfx.c` builds `'snd '` command lists in memory and plays them
+  through a `SndNewChannel` square-wave synth -- click on a swatch, place and
+  break on the world. The harness proves playback was accepted
+  (`sfx_lasterr=0`), which required one fix in the harness itself: the generated
+  prefs set `nosound true`, so the guest had no audio hardware and the Sound
+  Manager answered everything with `noHardwareErr` (-200).

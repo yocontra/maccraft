@@ -13,6 +13,8 @@
 #include "../game/scene.h"
 #include "../game/sky.h"
 #include "../game/light.h"
+#include "../game/pick.h"
+#include "../sound/sfx.h"
 #include "../game/texture.h"
 #include "../game/world.h"
 #include "game_window.h"
@@ -24,7 +26,16 @@ static WindowRef sWindow    = NULL;
 static Boolean sInitialized = false;
 static Boolean sIsVisible   = false;
 static Rect sContentRect;       /* Main content area */
-static Rect sBlockSelectorRect; /* Block selector area at bottom */
+static Rect sBlockSelectorRect;
+static Rect sSwatchSavedView;
+
+/* The surface under the mouse. The selection box and the click handler both use
+ * it, so what is highlighted is exactly what a click acts on. */
+static Rect sTitleStripRect;
+static Boolean sHoverValid = false;
+static short sHoverX = 0;
+static short sHoverY = 0;
+static short sHoverZ = 0; /* Block selector area at bottom */
 static Rect sDisplayRect;       /* Game view area */
 
 /* Camera offset in display-local coordinates (see Iso_Project). */
@@ -163,6 +174,10 @@ void GameWindow_Initialize(void)
             (short)(sContentRect.right - kGameViewMargin),
             (short)(sBlockSelectorRect.top - kGameViewMargin));
 
+    /* Title strip: the band between the frame and the play area. */
+    SetRect(&sTitleStripRect, sDisplayRect.left, kGameViewMargin,
+            sDisplayRect.right, (short)(sDisplayRect.top - 1));
+
     /* Centre tile (24,24) in the play area: Iso_Project(24,24,0,0,0) is
      * (0, 384), so the camera offset is the display centre minus that. */
     displayWidth  = (short)(sDisplayRect.right - sDisplayRect.left);
@@ -176,6 +191,7 @@ void GameWindow_Initialize(void)
     sIsVisible   = false;
 
     Scene_BuildIsland();
+    Sfx_Init();
     Sprite_SetView(&sDisplayRect);
     /* The window sits at windowRect; the sprite layer needs that offset because
      * it writes to screen memory rather than through the port. */
@@ -190,6 +206,7 @@ void GameWindow_Dispose(void)
         return;
     }
 
+    Sfx_Dispose();
     Sprite_Dispose();
 
     if (sWindow != NULL) {
@@ -397,6 +414,110 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     }
 
     KillPoly(poly);
+}
+
+/* Minecraft's crosshair: a small white plus with a dark backing so it reads on
+ * both sky and grass. Drawn with QuickDraw after the world pass. */
+static void DrawCrosshair(void)
+{
+    short cx = (short)((sDisplayRect.left + sDisplayRect.right) / 2);
+    short cy = (short)((sDisplayRect.top + sDisplayRect.bottom) / 2);
+    Rect bar;
+
+    /* Drawn through the sprite pixel path, not QuickDraw: inside the play area
+     * the world is written straight to screen memory, and QuickDraw fills there
+     * never survived. Dark backing first so the cross reads on grass and sky. */
+    SetRect(&bar, (short)(cx - 6), (short)(cy - 1), (short)(cx + 7), (short)(cy + 1));
+    Sprite_FillRect(&bar, 0x000000UL);
+    SetRect(&bar, (short)(cx - 1), (short)(cy - 6), (short)(cx + 1), (short)(cy + 7));
+    Sprite_FillRect(&bar, 0x000000UL);
+
+    SetRect(&bar, (short)(cx - 5), cy, (short)(cx + 6), (short)(cy + 1));
+    Sprite_FillRect(&bar, 0xFFFFFFUL);
+    SetRect(&bar, cx, (short)(cy - 5), (short)(cx + 1), (short)(cy + 6));
+    Sprite_FillRect(&bar, 0xFFFFFFUL);
+}
+
+/* The block in your hand: the selected kind, magnified twice, in the corner of
+ * the play area. Drawn with the same sprite pipeline as the world, at scale 2,
+ * which is the one place a block is shown larger than the world draws it. */
+static void DrawHeldBlock(BlockID id)
+{
+    short bx = (short)(sDisplayRect.right - 116);
+    short by = (short)(sDisplayRect.bottom - 84);
+
+    if (!Sprite_Ready()) {
+        return;
+    }
+    Sprite_DrawScaled((short)(bx + 32), by, id, kBlockFaceTop, 0, 2);
+    Sprite_DrawScaled((short)(bx + 32), (short)(by + 16), id, kBlockFaceLeft, 1, 2);
+    Sprite_DrawScaled((short)(bx + 64), (short)(by + 16), id, kBlockFaceRight, 2, 2);
+}
+
+/* Bounding box of the selection box for a tile, with a pixel of slack for the
+ * outline. Used to invalidate just the old and new hover cells when the mouse
+ * moves. */
+static void SelectionBoxRect(short x, short y, short z, Rect *out)
+{
+    short sx, sy;
+
+    Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
+    sx += sDisplayRect.left;
+    sy += sDisplayRect.top;
+    SetRect(out, (short)(sx - kTileW / 2 - 2), (short)(sy - kTileH / 2 - 2),
+            (short)(sx + kTileW / 2 + 2), (short)(sy + kTileH + 2));
+}
+
+/* Which surface the given point in the play area refers to. Raised terrain is
+ * picked on its visible top face: see game/pick.c, which owns the search. */
+static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *outZ)
+{
+    if (!PtInRect(localPt, &sDisplayRect)) {
+        return false;
+    }
+    return Pick_Tile((short)(localPt.h - sDisplayRect.left),
+                     (short)(localPt.v - sDisplayRect.top),
+                     sCamX, sCamY, outX, outY, outZ);
+}
+
+/* Follow the mouse. Moving between cells invalidates only the two selection
+ * boxes and the status strip, so hovering costs a few hundred pixels of drawing
+ * rather than a full frame. */
+static void UpdateHover(void)
+{
+    Point mouse;
+    short x, y, z;
+    Boolean valid;
+
+    GetMouse(&mouse);
+    valid = PickSurfaceAt(mouse, &x, &y, &z);
+
+    if (valid == sHoverValid && valid && x == sHoverX && y == sHoverY && z == sHoverZ) {
+        return;
+    }
+    if (!valid && !sHoverValid) {
+        return;
+    }
+
+    if (sHoverValid) {
+        Rect old;
+
+        SelectionBoxRect(sHoverX, sHoverY, sHoverZ, &old);
+        MarkDirty(&old);
+    }
+
+    sHoverValid = valid;
+    sHoverX = x;
+    sHoverY = y;
+    sHoverZ = z;
+
+    if (valid) {
+        Rect now;
+
+        SelectionBoxRect(sHoverX, sHoverY, sHoverZ, &now);
+        MarkDirty(&now);
+    }
+    MarkDirty(&sTitleStripRect);
 }
 
 /* The selection box: Minecraft's black wireframe on the block you are looking
@@ -680,7 +801,9 @@ static void DrawBlockSelector(void)
     BackColor(whiteColor);
     EraseRect(&frameRect);
 
-    /* Draw the three block swatches (dirt, stone, grass) */
+    Sprite_BeginFrame();
+
+    /* Draw one swatch per block kind */
     for (i = 0; i < kGameNumBlockTypes; i++) {
         SelectorBlockRect(i, &blockRect);
 
@@ -688,13 +811,23 @@ static void DrawBlockSelector(void)
         ForeColor(blackColor);
         FrameRect(&blockRect);
 
-        if (sHasColor) {
-            /* Swatches read from the same palette the world does, so the strip
-             * always tells the truth about what a block looks like. */
+        if (Sprite_Ready()) {
+            /* Textured swatches: the block's own top face, drawn by the same
+             * sprite pipeline as the world. The sprite layer clips to the play
+             * area, so its view is narrowed to the selector for the duration. */
+            sSwatchSavedView = sDisplayRect;
+            Sprite_SetView(&sBlockSelectorRect);
+            Sprite_Draw((short)(blockRect.left + (blockRect.right - blockRect.left) / 2 - kTileW / 2),
+                        (short)(blockRect.top + (blockRect.bottom - blockRect.top) / 2 - kTileH / 2),
+                        (BlockID)(i + 1), kBlockFaceTop, 0);
+            Sprite_SetView(&sSwatchSavedView);
+        }
+        else if (sHasColor) {
             RGBColor swatch = FaceBase((BlockID)(i + 1), kBlockFaceTop, 0);
 
             RGBForeColor(&swatch);
             PenPat(&qd.black);
+            PaintRect(&blockRect);
         }
         else {
             /* One bit per pixel: the kind's own grain stencil stands in for the
@@ -703,8 +836,8 @@ static void DrawBlockSelector(void)
 
             Block_Grain((BlockID)(i + 1), kBlockFaceTop, 0, (unsigned char *)&stamp);
             PenPat(&stamp);
+            PaintRect(&blockRect);
         }
-        PaintRect(&blockRect);
 
         /* Highlight the selected block type */
         if (i == sBlockType) {
@@ -744,10 +877,11 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
         return false;
     }
 
-    /* Block placement/removal in the game display */
+    /* Block placement/removal in the game display. The tile comes from the same
+     * surface pick the selection box uses, so a click always acts on the block
+     * that is highlighted. */
     if (PtInRect(localPt, &sDisplayRect)) {
-        if (!Iso_Unproject(localPt.h - sDisplayRect.left, localPt.v - sDisplayRect.top, sCamX,
-                           sCamY, &x, &y)) {
+        if (!PickSurfaceAt(localPt, &x, &y, &newZ)) {
             return true;
         }
 
@@ -756,6 +890,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
         if (shiftDown) {
             /* Remove the top block of the column */
             if (topZ >= 0 && World_Set(x, y, topZ, 0)) {
+                Sfx_Play(kSfxBreak);
                 InvalidateColumn(x, y, topZ);
             }
         }
@@ -763,6 +898,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
             /* Place the selected block on top of the column */
             newZ = (short)(topZ + 1);
             if (newZ < kWorldZ && World_Set(x, y, newZ, (BlockID)(sBlockType + 1))) {
+                Sfx_Play(kSfxPlace);
                 InvalidateColumn(x, y, newZ);
             }
         }
@@ -778,6 +914,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
         for (i = 0; i < kGameNumBlockTypes; i++) {
             SelectorBlockRect(i, &blockRect);
             if (PtInRect(localPt, &blockRect)) {
+                Sfx_Play(kSfxClick);
                 sBlockType = i;
                 MarkDirty(&sBlockSelectorRect);
                 return true;
@@ -910,11 +1047,7 @@ static void DrawTitleStrip(void)
     short i, len;
     short centreX, centreY;
 
-    strip = sWindow->portRect;
-    strip.top    = kGameViewMargin;
-    strip.bottom = sDisplayRect.top - 1;
-    strip.left   = sDisplayRect.left;
-    strip.right  = sDisplayRect.right;
+    strip = sTitleStripRect;
 
     /* A hairline under the strip, then the two labels. */
     PenNormal();
@@ -992,7 +1125,27 @@ static void GameWindow_Render(void)
     /* World drawing is limited to whole tiles, so it covers the display rect;
      * BeginUpdate has already clipped the port to the update region, which is
      * what keeps a one-column invalidation from repainting the rest. */
-    sRenderRect = sDisplayRect;
+    /* Repaint only what the update region asks for: QuickDraw fills are clipped
+     * by the port, and the world pass trims its direct pixel writes to this
+     * rect, so a small invalidation -- the selection box moving under the mouse
+     * -- costs a few hundred pixels instead of a full frame. */
+    {
+        RgnHandle clip = NewRgn();
+
+        if (clip != NULL) {
+            Rect box;
+
+            GetClip(clip);
+            box = (*clip)->rgnBBox;
+            DisposeRgn(clip);
+            if (!SectRect(&box, &sDisplayRect, &sRenderRect)) {
+                sRenderRect = sDisplayRect;
+            }
+        }
+        else {
+            sRenderRect = sDisplayRect;
+        }
+    }
 
     /* White window background and content frame */
     BackPat(&qd.white);
@@ -1008,23 +1161,32 @@ static void GameWindow_Render(void)
     /* World blocks (nothing to do when only the selector strip was dirty) */
 
     if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
+        /* The screen stays locked for the whole pass: the HUD draws through the
+         * same pixel path as the world, so releasing it before the HUD left the
+         * held block with nothing to write into. */
         Sprite_BeginFrame();
+        Sprite_SetView(&sRenderRect);
         DrawWorld(&sRenderRect);
-        Sprite_EndFrame();
+        Sprite_SetView(&sDisplayRect);
 
-        /* Selection box on whatever sits under the middle of the view. */
-        {
-            short midX, midY, top;
-
-            if (Iso_Unproject((short)((sDisplayRect.right - sDisplayRect.left) / 2),
-                              (short)((sDisplayRect.bottom - sDisplayRect.top) / 2),
-                              sCamX, sCamY, &midX, &midY)) {
-                top = World_TopZ(midX, midY);
-                if (top >= 0 && World_Get(midX, midY, top) != 0) {
-                    DrawSelectionBox(midX, midY, top);
-                }
-            }
+        /* Selection box on the surface under the mouse, which is also where a
+         * click will act. */
+        if (sHoverValid && sHoverZ > 0) {
+            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
         }
+        DrawCrosshair();
+        DrawHeldBlock((BlockID)(sBlockType + 1));
+        Sprite_EndFrame();
+    }
+    else {
+        /* A paint that only touches the strip still has to keep the HUD, which
+         * lives inside the play area: the world pixels are written directly and
+         * survive, but QuickDraw's clip can suppress these two, so they are
+         * drawn whenever the play area is anywhere in the clip. */
+        Sprite_BeginFrame();
+        DrawCrosshair();
+        DrawHeldBlock((BlockID)(sBlockType + 1));
+        Sprite_EndFrame();
     }
 
     /* Erase the margins so a partially visible edge tile cannot bleed outside

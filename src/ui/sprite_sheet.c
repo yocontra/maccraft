@@ -47,6 +47,13 @@ static unsigned char sDevice[kArtPaletteEntries];
  * written as real pixels and no palette mapping is involved at all. */
 static unsigned char sRGB[kArtPaletteEntries][3];
 
+/* Shading a face means moving the whole texture one ramp step down, not passing
+ * every texel through Art_ShadeIndex: that maps each texel to a fixed step for
+ * the given light level, which collapses a texture to one flat colour. This
+ * table is the correct operation -- hue preserved, step reduced by the band's
+ * shade and floored at the darkest step of the same hue. */
+static unsigned char sShadeMap[kSpriteShades][kArtPaletteEntries];
+
 /* The same palette as whole 0x00RRGGBB words, which is one store per pixel at
  * 32-bit depth instead of four byte stores and a shift. */
 static unsigned long sPixel32[kArtPaletteEntries];
@@ -90,20 +97,6 @@ short Sprite_ShadeStep(short factor)
         return 2;
     }
     return 3;
-}
-
-static short FactorOf(short shade)
-{
-    switch (shade) {
-    case 1:
-        return 205;
-    case 2:
-        return 154;
-    case 3:
-        return 103;
-    default:
-        return 256;
-    }
 }
 
 /* An indexed GDevice keeps a Palette in pmTable: a dense list of ColorInfo, each
@@ -184,7 +177,26 @@ static void BuildDeviceMap(void)
     }
 }
 
-static void PutBand(short band, short width, short height)
+static void BuildShadeMap(void)
+{
+    short shade;
+    short i;
+
+    for (shade = 0; shade < kSpriteShades; shade++) {
+        for (i = 0; i < kArtPaletteEntries; i++) {
+            short hue = (short)(i & ~3);
+            short step = (short)(i & 3);
+            short out = (short)(step - shade);
+
+            if (out < 0) {
+                out = 0;
+            }
+            sShadeMap[shade][i] = (unsigned char)(hue + out);
+        }
+    }
+}
+
+static void PutBand(short band, short width, short height, short shade)
 {
     short row, col;
     Ptr colourBase = (Ptr)sSheet + (long)band * kSpriteH * kSpriteW;
@@ -237,16 +249,18 @@ Boolean Sprite_Init(void)
     }
 
     BuildRGBTable();
+    BuildShadeMap();
     BuildDeviceMap();
 
     for (id = 1; id <= kSpriteKinds; id++) {
         for (face = 0; face < 3; face++) {
+            /* Bake the texture once, unshaded; the four shade bands are that
+             * same pixel art with its ramp step shifted, so the texture survives
+             * and the face still darkens as a whole. */
+            Bake_Face(Art_Texture((BlockID)id, face), face, sPixels, sPixelMask);
             for (shade = 0; shade < kSpriteShades; shade++) {
-                short band = BandOf((BlockID)id, face, shade);
-
-                Bake_FaceShaded(Art_Texture((BlockID)id, face), face, FactorOf(shade),
-                                sPixels, sPixelMask);
-                PutBand(band, Bake_FaceWidth(face), Bake_FaceHeight(face));
+                PutBand(BandOf((BlockID)id, face, shade), Bake_FaceWidth(face),
+                        Bake_FaceHeight(face), shade);
             }
         }
     }
@@ -292,6 +306,39 @@ void Sprite_EndFrame(void)
     sScreenBase = NULL;
 }
 
+/* A filled rectangle written through the same pixel path as the sprites. The
+ * HUD uses this because QuickDraw's fills inside the play area do not survive:
+ * the world is written straight to screen memory, and anything QuickDraw paints
+ * afterwards is at the mercy of the update clip. */
+void Sprite_FillRect(const Rect *r, unsigned long rgb)
+{
+    short x, y;
+    short viewLeft, viewRight, viewTop, viewBottom;
+
+    if (!sReady || sScreenBase == NULL || r == NULL) {
+        return;
+    }
+    viewLeft = (short)(sView.left + sOriginX);
+    viewRight = (short)(sView.right + sOriginX);
+    viewTop = (short)(sView.top + sOriginY);
+    viewBottom = (short)(sView.bottom + sOriginY);
+
+    for (y = (short)(r->top + sOriginY); y < (short)(r->bottom + sOriginY); y++) {
+        unsigned long *line;
+
+        if (y < viewTop || y >= viewBottom) {
+            continue;
+        }
+        line = (unsigned long *)(sScreenBase + (long)y * sScreenRowBytes);
+        for (x = (short)(r->left + sOriginX); x < (short)(r->right + sOriginX); x++) {
+            if (x < viewLeft || x >= viewRight) {
+                continue;
+            }
+            line[x] = rgb;
+        }
+    }
+}
+
 void Sprite_SetView(const Rect *view)
 {
     if (view != NULL) {
@@ -319,6 +366,14 @@ void Sprite_Dispose(void)
 long Sprite_Probe[2];
 
 void Sprite_Draw(short left, short top, BlockID id, short face, short shade)
+{
+    Sprite_DrawScaled(left, top, id, face, shade, 1);
+}
+
+/* One face, optionally magnified by an integer factor. Scale 2 is used for the
+ * held block in the corner, which is the one place the game shows a block bigger
+ * than the world draws it. */
+void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shade, short scale)
 {
     short band;
     short width;
@@ -380,6 +435,39 @@ void Sprite_Draw(short left, short top, BlockID id, short face, short shade)
 
     /* The depth branch is hoisted out of the row loop: one test per face instead
      * of one per row. */
+    if (sDepth >= 32 && scale == 2) {
+        /* Two-by-two magnification: each source pixel fills a 2x2 destination
+         * square, written as two words per row into two consecutive rows. */
+        for (row = firstRow; row < lastRow; row++) {
+            short srcRow = (short)(bandStart + row);
+            short x0 = (short)(originX + sRunFirst[srcRow] * 2);
+            short x1 = (short)(originX + (sRunLast[srcRow] + 1) * 2);
+            const unsigned char *p;
+            unsigned long *line;
+            unsigned long *line2;
+
+            if (x0 < viewLeft) {
+                x0 = viewLeft;
+            }
+            if (x1 > viewRight) {
+                x1 = viewRight;
+            }
+            if (x0 >= x1) {
+                continue;
+            }
+            p = bandPixels + (long)row * kSpriteW;
+            line = (unsigned long *)(sScreenBase + (long)(originY + row * 2) * sScreenRowBytes) + x0;
+            line2 = (unsigned long *)((Ptr)line + sScreenRowBytes);
+            for (col = x0; col < x1; col++, line++, line2++) {
+                unsigned long word = sPixel32[p[(col - originX) >> 1]];
+
+                *line = word;
+                *line2 = word;
+            }
+        }
+        return;
+    }
+
     if (sDepth >= 32) {
         for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
             short srcRow = (short)(bandStart + row);

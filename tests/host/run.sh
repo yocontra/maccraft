@@ -35,6 +35,7 @@ run_test() {
 run_test test_world "$repo/src/game/world.c"
 run_test test_iso "$repo/src/game/iso.c"
 run_test test_blocks "$repo/src/game/blocks.c"
+run_test test_pick "$repo/src/game/pick.c" "$repo/src/game/iso.c" "$repo/src/game/world.c"
 run_test test_light "$repo/src/game/light.c" "$repo/src/game/world.c"
 run_test test_sky "$repo/src/game/sky.c"
 run_test test_scene "$repo/src/game/scene.c" "$repo/src/game/world.c"

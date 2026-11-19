@@ -20,10 +20,17 @@ Boolean Sprite_Ready(void);
 /* Play area, in the window's local coordinates; blits are trimmed to it. */
 void Sprite_SetView(const Rect *view);
 
+/* Fill a rectangle in the window's local coordinates with an 0x00RRGGBB colour,
+ * through the sprite pixel path. Used by the HUD. */
+void Sprite_FillRect(const Rect *r, unsigned long rgb);
+
 /* The window's global position, as it was created. */
 void Sprite_SetOrigin(short dx, short dy);
 
 void Sprite_Draw(short left, short top, BlockID id, short face, short shade);
+
+/* Same, with each pixel magnified by `scale` (1 or 2). Used for the held block. */
+void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shade, short scale);
 short Sprite_ShadeStep(short factor);
 
 #endif

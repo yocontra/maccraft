@@ -29,7 +29,10 @@ frameskip 0
 gfxaccel true
 nocdrom true
 nonet false
-nosound true
+# Sound on: with nosound true the guest has no audio hardware and the Sound
+# Manager answers every SndPlay with noHardwareErr (-200), so the app's sound
+# effects could not be exercised at all. The provisioned VM runs nosound false.
+nosound false
 nogui false
 noclipconversion false
 ignoresegv true
