@@ -438,6 +438,8 @@ static short TakeInt(const char **p)
  * the same code the keyboard and the mouse use, so what the harness proves is
  * what a player gets. */
 static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *outZ);
+static Boolean PickSurfaceAtFace(Point localPt, short *outX, short *outY, short *outZ,
+                                 short *outFace);
 
 static void ApplyRemoteCommand(const char *cmd)
 {
@@ -491,11 +493,12 @@ static void ApplyRemoteCommand(const char *cmd)
         char result[64];
 
         Point probe;
+        short face = 0;
 
         probe.h = px;
         probe.v = py;
 
-        if (PickSurfaceAt(probe, &tx, &ty, &tz)) {
+        if (PickSurfaceAtFace(probe, &tx, &ty, &tz, &face)) {
             short sx = 0, sy = 0;
 
             Iso_Project(tx, ty, (short)(tz - 1), sCamX, sCamY, &sx, &sy);
@@ -507,7 +510,7 @@ static void ApplyRemoteCommand(const char *cmd)
                 vals[0] = tx;
                 vals[1] = ty;
                 vals[2] = tz;
-                vals[3] = (short)(sx + sDisplayRect.left);
+                vals[3] = face;
                 for (k = 0; k < 5; k++) {
                     if (k == 4) {
                         /* The point is inside the tile's diamond, so its centre
@@ -536,6 +539,85 @@ static void ApplyRemoteCommand(const char *cmd)
         }
         else {
             strcpy(result, "none");
+        }
+        Remote_SetResult(result);
+    }
+    else if (strncmp(cmd, "place", 5) == 0) {
+        /* Harness: resolve the point, run the click handler, report which cell
+         * the click acted on -- face placement is then checkable without
+         * reading pixels. */
+        const char *p = cmd + 5;
+        short px = TakeInt(&p);
+        short py = TakeInt(&p);
+        Point probe;
+        short tx = 0, ty = 0, tz = 0, face = 0;
+        char result[64];
+
+        probe.h = px;
+        probe.v = py;
+        if (!PickSurfaceAtFace(probe, &tx, &ty, &tz, &face)) {
+            strcpy(result, "nopick");
+        }
+        else {
+            short vals[4];
+            short k, q = 0;
+
+            vals[0] = tx;
+            vals[1] = ty;
+            vals[2] = tz;
+            vals[3] = face;
+            for (k = 0; k < 4; k++) {
+                short digits[6];
+                short n = 0;
+                long v = vals[k];
+
+                if (v == 0) {
+                    digits[n++] = 0;
+                }
+                while (v > 0) {
+                    digits[n++] = (short)(v % 10);
+                    v /= 10;
+                }
+                while (n > 0) {
+                    result[q++] = (char)('0' + digits[--n]);
+                }
+                if (k < 3) {
+                    result[q++] = ' ';
+                }
+            }
+            result[q] = 0;
+
+            /* Report the cell the click will act on and whether it was free:
+             * "tile x y z face -> cell x y z wasEmpty". */
+            {
+                short cX = tx, cY = ty, cZ;
+                short wasEmpty;
+
+                if (face == kPickFaceLeft) {
+                    cY = (short)(ty + 1);
+                    cZ = (short)(tz - 1);
+                }
+                else if (face == kPickFaceRight) {
+                    cX = (short)(tx + 1);
+                    cZ = (short)(tz - 1);
+                }
+                else {
+                    cZ = (short)(World_TopZ(tx, ty) + 1);
+                }
+
+                wasEmpty = (World_Get(cX, cY, cZ) == 0) ? 1 : 0;
+                {
+                    const char *word = wasEmpty ? " free" : " busy";
+                    short w = 0;
+
+                    while (word[w] != 0 && q < (short)sizeof(result) - 1) {
+                        result[q++] = word[w++];
+                    }
+                    result[q] = 0;
+                }
+
+                GameWindow_ClickForTest(px, py, false);
+            }
         }
         Remote_SetResult(result);
     }
@@ -781,6 +863,18 @@ static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *out
                      sCamX, sCamY, outX, outY, outZ);
 }
 
+/* Same pick, plus which face of the block the point is on. */
+static Boolean PickSurfaceAtFace(Point localPt, short *outX, short *outY, short *outZ,
+                                 short *outFace)
+{
+    if (!PtInRect(localPt, &sDisplayRect)) {
+        return false;
+    }
+    return Pick_TileFace((short)(localPt.h - sDisplayRect.left),
+                         (short)(localPt.v - sDisplayRect.top),
+                         sCamX, sCamY, outX, outY, outZ, outFace);
+}
+
 /* The block under the hover, which is what the strip reports as "look". */
 static BlockID HoveredBlock(void)
 {
@@ -991,11 +1085,34 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
      * surface pick the selection box uses, so a click always acts on the block
      * that is highlighted. */
     if (PtInRect(localPt, &sDisplayRect)) {
-        if (!PickSurfaceAt(localPt, &x, &y, &newZ)) {
+        short face = 0;
+        short placeX = 0, placeY = 0, placeZ = 0;
+
+        if (!PickSurfaceAtFace(localPt, &x, &y, &newZ, &face)) {
             return true;
         }
 
         topZ = World_TopZ(x, y);
+
+        /* Where a click would put a block. The top face stacks on the column;
+         * a side face puts the block beside the one it belongs to, at the same
+         * level, which is how you build into a wall instead of piling up. */
+        if (face == kPickFaceLeft) {
+            /* The left face points at +y, which is the neighbour that hides it. */
+            placeX = x;
+            placeY = (short)(y + 1);
+            placeZ = (short)(newZ - 1);
+        }
+        else if (face == kPickFaceRight) {
+            placeX = (short)(x + 1);
+            placeY = y;
+            placeZ = (short)(newZ - 1);
+        }
+        else {
+            placeX = x;
+            placeY = y;
+            placeZ = (short)(topZ + 1);
+        }
 
         if (shiftDown) {
             /* Start mining: the block comes away after the button has been held
@@ -1008,15 +1125,15 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                 sBreakTicks = 0;
             }
         }
-        else {
-            /* Place the selected block on top of the column */
-            newZ = (short)(topZ + 1);
-            if (newZ < kWorldZ && World_Set(x, y, newZ, (BlockID)(sBlockType + 1))) {
-                Sfx_Play(kSfxPlace);
-                sWorldDirty = true;
-                sSwingUntil = (unsigned long)TickCount() + 8;
-                InvalidateColumn(x, y, newZ);
-            }
+        else if (placeX >= 0 && placeX < kWorldX &&
+                 placeY >= 0 && placeY < kWorldY &&
+                 placeZ >= 0 && placeZ < kWorldZ &&
+                 World_Get(placeX, placeY, placeZ) == 0 &&
+                 World_Set(placeX, placeY, placeZ, (BlockID)(sBlockType + 1))) {
+            Sfx_Play(kSfxPlace);
+            sWorldDirty = true;
+            sSwingUntil = (unsigned long)TickCount() + 8;
+            InvalidateColumn(placeX, placeY, placeZ);
         }
 
         return true;
@@ -1354,10 +1471,16 @@ static void GameWindow_Render(void)
         Sprite_EndFrame();
 
         /* After the frame closes: QuickDraw strokes drawn while the pixel frame
-         * is open are lost when the frame ends, which is why the wireframe
-         * disappeared. */
+         * is open are lost when the frame ends. The port is set explicitly
+         * because the coordinates are window-local -- without it the wireframe
+         * lands offset by the window's own position on the desktop. */
         if (sHoverValid) {
+            GrafPtr savedPort;
+
+            GetPort(&savedPort);
+            SetPort(sWindow);
             DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+            SetPort(savedPort);
         }
     }
     else {
@@ -1371,10 +1494,16 @@ static void GameWindow_Render(void)
         Sprite_EndFrame();
 
         /* After the frame closes: QuickDraw strokes drawn while the pixel frame
-         * is open are lost when the frame ends, which is why the wireframe
-         * disappeared. */
+         * is open are lost when the frame ends. The port is set explicitly
+         * because the coordinates are window-local -- without it the wireframe
+         * lands offset by the window's own position on the desktop. */
         if (sHoverValid) {
+            GrafPtr savedPort;
+
+            GetPort(&savedPort);
+            SetPort(sWindow);
             DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+            SetPort(savedPort);
         }
     }
 
@@ -1420,14 +1549,43 @@ static void GameWindow_Render(void)
 
     Sprite_Phase[1] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]) - Sprite_Phase[0];
 
-    Sprite_BeginFrame();
-    Sprite_SetView(&sTitleStripRect);
-    HUD_DrawStrip(HoveredBlock(), (BlockID)(sBlockType + 1),
-                  sHoverValid ? sHoverX : (short)(sPlayer.x >> 16),
-                  sHoverValid ? sHoverY : (short)(sPlayer.y >> 16));
-    Sprite_SetView(&sBlockSelectorRect);
-    HUD_DrawHotbar((BlockID)(sBlockType + 1), kGameNumBlockTypes);
-    Sprite_SetView(&sDisplayRect);
+    /* The chrome is skipped when the damage cannot touch it: a pointer move
+     * repaints two boxes in the play area, and redrawing the strip, the hotbar
+     * and the held block for that costs as much again as the world pass. */
+    {
+        Rect chrome;
+        Rect touched;
+        Boolean wantsStrip = fullPaint || sStripDirty;
+        Boolean wantsHotbar = fullPaint;
+        Boolean wantsHeld = fullPaint;
+        Boolean wantsCross = fullPaint;
+
+        chrome = sTitleStripRect;
+        UnionRect(&sBlockSelectorRect, &chrome, &chrome);
+        if (!SectRect(&sRenderRect, &chrome, &touched)) {
+            wantsStrip = false;
+            wantsHotbar = false;
+        }
+        if (SectRect(&sRenderRect, &sDisplayRect, &touched)) {
+            wantsHeld = true;
+            wantsCross = true;
+        }
+
+        Sprite_BeginFrame();
+        if (wantsStrip) {
+            Sprite_SetView(&sTitleStripRect);
+            HUD_DrawStrip(HoveredBlock(), (BlockID)(sBlockType + 1),
+                          sHoverValid ? sHoverX : (short)(sPlayer.x >> 16),
+                          sHoverValid ? sHoverY : (short)(sPlayer.y >> 16));
+        }
+        if (wantsHotbar) {
+            Sprite_SetView(&sBlockSelectorRect);
+            HUD_DrawHotbar((BlockID)(sBlockType + 1), kGameNumBlockTypes);
+        }
+        Sprite_SetView(&sDisplayRect);
+        (void)wantsHeld;
+        (void)wantsCross;
+    }
     Sprite_EndFrame();
 
     Sprite_Phase[2] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]) - Sprite_Phase[0] - Sprite_Phase[1];

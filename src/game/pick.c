@@ -49,11 +49,42 @@ static Boolean DiamondContains(short screenX, short screenY, short x, short y,
                      (kTileW / 2) * (kTileH / 2));
 }
 
+/*
+ * Is (dx, dy), relative to the top-face centre, inside the visible side quad?
+ * The left face occupies (-16,0)..(0,24) as a parallelogram sloping down to the
+ * right; the right face is its mirror. `which` is 0 for left, 1 for right.
+ */
+static Boolean SideContains(short dx, short dy, short which)
+{
+    short u = dx;
+    short top, bottom;
+
+    if (which == 0) {
+        if (u < -kTileW / 2 || u > 0)
+            return false;
+        top = (short)((u + kTileW / 2) / 2);
+    }
+    else {
+        if (u < 0 || u > kTileW / 2)
+            return false;
+        top = (short)((kTileW / 2 - u) / 2);
+    }
+
+    bottom = (short)(top + kTileH);
+    return (Boolean)(dy >= top && dy < bottom);
+}
+
 Boolean Pick_Tile(short screenX, short screenY, short camX, short camY,
                   short *outX, short *outY, short *outZ)
 {
+    return Pick_TileFace(screenX, screenY, camX, camY, outX, outY, outZ, NULL);
+}
+
+Boolean Pick_TileFace(short screenX, short screenY, short camX, short camY,
+                      short *outX, short *outY, short *outZ, short *outFace)
+{
     short gx, gy;
-    short bestX = 0, bestY = 0, bestZ = -1;
+    short bestX = 0, bestY = 0, bestZ = -1, bestFace = kPickFaceTop;
     Boolean found = false;
     int x, y;
 
@@ -65,22 +96,56 @@ Boolean Pick_Tile(short screenX, short screenY, short camX, short camY,
             continue;
 
         for (y = (int)gy - kPickWindow; y <= (int)gy + kPickWindow; y++) {
-            short z;
+            short top, z;
 
             if (y < 0 || y >= kWorldY)
                 continue;
 
-            z = (short)(World_TopZ((short)x, (short)y) + 1);
-            if (!DiamondContains(screenX, screenY, (short)x, (short)y, z,
-                                 camX, camY))
+            top = World_TopZ((short)x, (short)y);
+            if (top < 0)
                 continue;
 
-            if (!found || z > bestZ ||
-                (z == bestZ && x + y > (int)bestX + (int)bestY)) {
-                found = true;
-                bestX = (short)x;
-                bestY = (short)y;
-                bestZ = z;
+            /* Down the column: the first face that contains the point, from the
+             * top of the column downwards, is the one being pointed at. Only
+             * faces that are actually drawn can be hit, so a buried side is
+             * skipped -- otherwise a point on a hill selects the block behind
+             * it. */
+            for (z = top; z >= 0; z--) {
+                short px, py, face;
+
+                if (World_Get((short)x, (short)y, z) == 0)
+                    continue;
+
+                Iso_Project((short)x, (short)y, z, camX, camY, &px, &py);
+
+                if (World_Get((short)x, (short)y, (short)(z + 1)) == 0 &&
+                    DiamondContains(screenX, screenY, (short)x, (short)y, z,
+                                    camX, camY)) {
+                    face = kPickFaceTop;
+                }
+                else if (World_Get((short)x, (short)(y + 1), z) == 0 &&
+                         SideContains(screenX - px, screenY - py, 0)) {
+                    face = kPickFaceLeft;
+                }
+                else if (World_Get((short)(x + 1), (short)y, z) == 0 &&
+                         SideContains(screenX - px, screenY - py, 1)) {
+                    face = kPickFaceRight;
+                }
+                else {
+                    continue;
+                }
+
+                /* Nearest wins: a higher block, then the later tile in painter
+                 * order. */
+                if (!found || z > bestZ ||
+                    (z == bestZ && (x + y) > (bestX + bestY))) {
+                    found = true;
+                    bestX = (short)x;
+                    bestY = (short)y;
+                    bestZ = z;
+                    bestFace = face;
+                }
+                break;
             }
         }
     }
@@ -90,6 +155,9 @@ Boolean Pick_Tile(short screenX, short screenY, short camX, short camY,
 
     *outX = bestX;
     *outY = bestY;
-    *outZ = bestZ;
+    /* Callers expect the surface level; the block itself is one below. */
+    *outZ = (short)(bestZ + 1);
+    if (outFace != NULL)
+        *outFace = bestFace;
     return true;
 }
