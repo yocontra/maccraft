@@ -9,6 +9,7 @@
 #include "../constants.h"
 #include "../error.h"
 #include "../game/iso.h"
+#include "../game/light.h"
 #include "../game/texture.h"
 #include "../game/world.h"
 #include "game_window.h"
@@ -46,7 +47,7 @@ static void GameWindow_Update(void);
 static void GameWindow_Render(void);
 static void DrawWorld(Rect *view);
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, BlockID id, short face);
+                      short y3, BlockID id, short face, short shade);
 /* The selector still wants a single pattern per block. */
 static Pattern *BlockPattern(BlockID id)
 {
@@ -262,8 +263,27 @@ static const RGBColor *FaceColor(BlockID id, short face)
  * RGBForeColor is a solid colour; on a 1-bit display the pattern itself is the
  * fill. Painting the polygon any other way filled with the pen colour and
  * produced the black play area. */
+/* Apply a light factor to a palette colour. The two colour structs have the
+ * same field layout on purpose, and this is the only place that relies on it. */
+static RGBColor Shaded(const RGBColor *base, short factor)
+{
+    LightColor in;
+    LightColor out;
+    RGBColor result;
+
+    in.red   = base->red;
+    in.green = base->green;
+    in.blue  = base->blue;
+    out = Light_Shade(in, factor);
+
+    result.red   = out.red;
+    result.green = out.green;
+    result.blue  = out.blue;
+    return result;
+}
+
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, BlockID id, short face)
+                      short y3, BlockID id, short face, short shade)
 {
     PolyHandle poly;
 
@@ -281,12 +301,17 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     if (sHasColor && id >= 1 && id <= 3) {
         /* Base colour, then a sparse grain in a darker shade of it. Without the
          * grain a plateau of identical tops reads as one flat diamond: the
-         * texture is what tells you it is made of blocks. */
-        RGBForeColor(FaceColor(id, face));
-        RGBBackColor(FaceColor(id, face));
+         * texture is what tells you it is made of blocks. The light factor is
+         * baked into both colours, so a shadowed face darkens as a whole
+         * instead of showing bright grain on a dark base. */
+        RGBColor base  = Shaded(FaceColor(id, face), shade);
+        RGBColor grain = Shaded(FaceGrainColor(id, face), shade);
+
+        RGBForeColor(&base);
+        RGBBackColor(&base);
         FillPoly(poly, &qd.black);
 
-        RGBForeColor(FaceGrainColor(id, face));
+        RGBForeColor(&grain);
         FillPoly(poly, face == 0 ? &kGrainSparse : &kGrainMedium);
     }
     else {
@@ -309,17 +334,26 @@ static void DrawBlock(short x, short y, short z, BlockID id)
     sx += sDisplayRect.left;
     sy += sDisplayRect.top;
 
+    /* One light factor per face: the sun's angle multiplied by however much of
+     * the face is buried. Three neighbour lookups per block, no drawing cost. */
+    short topShade   = Light_Combine(Light_FaceFactor(kLightFaceTop),
+                                     Light_Occlusion(x, y, z, kLightFaceTop));
+    short leftShade  = Light_Combine(Light_FaceFactor(kLightFaceLeft),
+                                     Light_Occlusion(x, y, z, kLightFaceLeft));
+    short rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight),
+                                     Light_Occlusion(x, y, z, kLightFaceRight));
+
     /* Top face: diamond centred at (sx, sy), kTileW x kTileH. */
     PaintQuad(sx, sy - kTileH / 2, sx + kTileW / 2, sy, sx, sy + kTileH / 2, sx - kTileW / 2, sy,
-              id, 0);
+              id, 0, topShade);
 
     /* Left face. */
     PaintQuad(sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH,
-              sx - kTileW / 2, sy + kTileH / 2, id, 1);
+              sx - kTileW / 2, sy + kTileH / 2, id, 1, leftShade);
 
     /* Right face. */
     PaintQuad(sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
-              sx, sy + kTileH, id, 2);
+              sx, sy + kTileH, id, 2, rightShade);
 
     /* No outline. A block is separated from its neighbours by the shade step
      * between the top face and the two sides plus the contact shadow, exactly
@@ -778,6 +812,7 @@ static void DrawTitleStrip(void)
 }
 
 /* Render the game window contents. Only called between BeginUpdate/EndUpdate. */
+
 static void GameWindow_Render(void)
 {
     Rect strip;

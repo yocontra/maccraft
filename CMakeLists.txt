@@ -35,6 +35,7 @@ set(SRC_C
     src/game/world.c
     src/game/iso.c
     src/game/texture.c
+    src/game/light.c
 )
 set(HEADER_FILES
     src/ui/menu.h
@@ -50,6 +51,7 @@ set(HEADER_FILES
     src/game/world.h
     src/game/iso.h
     src/game/texture.h
+    src/game/light.h
 )
 set(RESOURCE_FILES
     src/main.r
