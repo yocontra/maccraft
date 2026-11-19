@@ -123,3 +123,27 @@ The spawn point was also wrong in a way that hid itself: the island's centre is 
 hut, and the hut's roof is the top block the world can hold (z = 7), so spawning at
 `TopZ + 1` put the player at z = 8, outside the world, falling for ever. The spawn
 now walks out from the centre to the first column with ground and no structure.
+
+## Input, animation and idle stability
+
+The harness cannot inject keyboard events into the guest (host focus belongs to
+whoever is using the Mac), so the game reads commands from the shared folder:
+`Unix:MacCraft cmd` with `walk dx dy ticks`, `jump`, `select n`, `save`. Each verb
+runs the same code the keyboard and mouse run, and the app writes a receipt to
+`Unix:MacCraft ack` so the host can tell "did nothing" from "never arrived". Two
+bugs died here: a short read reports `eofErr`, which was treated as failure, so
+every command was consumed and ignored; and the receipt was written before the
+dispatch decided, so it described the previous command.
+
+The simulation now advances from the idle loop at a fixed 60 Hz with catch-up
+capped at three ticks. It had been lost in a refactor, which left the running game
+without gravity or walking — only the harness hooks moved the player.
+
+Measured on the guest: `walk 1 0 30` changes the view within a second, the camera
+follows at half speed and converges, and four seconds later the frame is
+**byte-identical** — no rescans while sitting still. `jump` changes only the
+player's band, and `select n` changes the hotbar and the held block.
+
+The figure has a walk cycle (legs alternate, torso bobs on alternate phases) and a
+tucked airborne pose, and footsteps and landings play from the tile-change and
+ground-contact events rather than from the key state.

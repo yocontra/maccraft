@@ -102,7 +102,7 @@ static void DrawAboutContent(DialogPtr dialog)
     MoveTo(12, 94);
     DrawString("\pArrow keys or WASD pan the camera.");
     MoveTo(12, 106);
-    DrawString("\pKeys 1, 2 and 3 select dirt, stone or grass.");
+    DrawString("\pKeys 1-9 pick a block, T cycles, arrows walk, space jumps.");
 
     /* Version in the grey small-print style. */
     {

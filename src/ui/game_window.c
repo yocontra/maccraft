@@ -5,6 +5,7 @@
 #include <Quickdraw.h>
 #include <TextUtils.h>
 #include <Processes.h>
+#include <string.h>
 #include <Windows.h>
 
 #include "../constants.h"
@@ -22,6 +23,7 @@
 #include "../game/world.h"
 #include "game_window.h"
 #include "hud.h"
+#include "remote.h"
 #include "world_view.h"
 #include "avatar.h"
 #include "sprite_sheet.h"
@@ -64,6 +66,10 @@ static Boolean sJumpHeld = false;
 static unsigned long sLastPhysicsTick = 0;
 static Boolean sWorldDirty = false;
 static unsigned long sLastSaveTick = 0;
+static short sWalkPhase = 0;
+static Boolean sWasOnGround = true;
+static short sLastPlayerTileX = -1;
+static short sLastPlayerTileY = -1;
 
 /* Last frame's camera, so a pan can scroll the previous image instead of
  * recomposing the whole view. */
@@ -346,6 +352,67 @@ static RGBColor FromBlockColor(BlockColor c)
  * fill is cheap and always correct. */
 
 
+/* Parse a small integer out of a command line, advancing the cursor. */
+static short TakeInt(const char **p)
+{
+    short value = 0;
+    Boolean negative = false;
+
+    while (**p == ' ') {
+        (*p)++;
+    }
+    if (**p == '-') {
+        negative = true;
+        (*p)++;
+    }
+    while (**p >= '0' && **p <= '9') {
+        value = (short)(value * 10 + (**p - '0'));
+        (*p)++;
+    }
+    return negative ? (short)-value : value;
+}
+
+/* Run a command from the harness: walk, jump, select. Every verb goes through
+ * the same code the keyboard and the mouse use, so what the harness proves is
+ * what a player gets. */
+static void ApplyRemoteCommand(const char *cmd)
+{
+    if (strncmp(cmd, "walk", 4) == 0) {
+        const char *p = cmd + 4;
+        short dx = TakeInt(&p);
+        short dy = TakeInt(&p);
+        short ticks = TakeInt(&p);
+
+        Remote_SetResult("walk");
+        GameWindow_WalkForTest(dx, dy, ticks);
+    }
+    else if (strncmp(cmd, "jump", 4) == 0) {
+        Remote_SetResult("jump");
+        GameWindow_JumpForTest();
+    }
+    else if (strncmp(cmd, "select", 6) == 0) {
+        const char *p = cmd + 6;
+        short n = TakeInt(&p);
+
+        if (n >= 1 && n <= kGameNumBlockTypes) {
+            sBlockType = (short)(n - 1);
+            Sfx_Play(kSfxClick);
+            MarkDirty(&sBlockSelectorRect);
+            Remote_SetResult("select");
+        }
+        else {
+            Remote_SetResult("select out of range");
+        }
+    }
+    else if (strncmp(cmd, "save", 4) == 0) {
+        Remote_SetResult("save");
+        GameWindow_SaveWorld();
+    }
+    else {
+        Remote_SetResult("unknown verb");
+    }
+}
+
 /* The rectangle the held block occupies, so the swing can repaint just that
  * instead of the whole display. */
 static void HeldBlockRect(Rect *out)
@@ -380,8 +447,25 @@ static void CentreOnPlayer(void)
     short targetX = (short)((sDisplayRect.right - sDisplayRect.left) / 2);
     short targetY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2);
 
-    sCamX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
-    sCamY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+    {
+        short wantX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
+        short wantY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+        short dx = (short)(wantX - sCamX);
+        short dy = (short)(wantY - sCamY);
+
+        /* Follow at half speed, with a floor of one pixel so the camera always
+         * converges: snapping the camera to the player each tick made every step
+         * a jump-cut, and the scroll optimisation turns this into a smooth pan
+         * for almost nothing. */
+        if (dx > 1 || dx < -1) {
+            dx = (short)(dx / 2);
+        }
+        if (dy > 1 || dy < -1) {
+            dy = (short)(dy / 2);
+        }
+        sCamX = (short)(sCamX + dx);
+        sCamY = (short)(sCamY + dy);
+    }
 }
 
 /* A player figure, two blocks tall: shadow on the ground, legs, torso, head.
@@ -697,18 +781,15 @@ static Boolean GameWindow_HandleKeyDown(char key)
     }
 
     switch (key) {
-    case '1': /* Select dirt */
-        sBlockType = 0;
-        MarkDirty(&sBlockSelectorRect);
-        return true;
-
-    case '2': /* Select stone */
-        sBlockType = 1;
-        MarkDirty(&sBlockSelectorRect);
-        return true;
-
-    case '3': /* Select grass */
-        sBlockType = 2;
+    /* 1-9 pick the first nine hotbar slots, so the keyboard reaches the whole
+     * palette the strip shows instead of only the first three kinds. */
+    case '1': case '2': case '3': case '4': case '5':
+    case '6': case '7': case '8': case '9':
+        sBlockType = (short)(key - '1');
+        if (sBlockType >= kGameNumBlockTypes) {
+            sBlockType = (short)(kGameNumBlockTypes - 1);
+        }
+        Sfx_Play(kSfxClick);
         MarkDirty(&sBlockSelectorRect);
         return true;
 
@@ -922,7 +1003,8 @@ static void GameWindow_Render(void)
             DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
         }
         Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
-                    (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect);
+                    (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
+                    sWalkPhase, (Boolean)!sPlayer.onGround);
         HUD_DrawCrosshair();
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
@@ -1335,6 +1417,89 @@ void GameWindow_Idle(void)
                  (front.highLongOfPSN != mine.highLongOfPSN ||
                   front.lowLongOfPSN != mine.lowLongOfPSN))) {
                 SetFrontProcess(&mine);
+            }
+        }
+    }
+
+    /* Physics, at a fixed 60 Hz whatever the event rate: gravity must not depend
+     * on how often the user moves the mouse, and catch-up is capped so a long
+     * pause cannot teleport the player. This is the only place the simulation
+     * advances; the keyboard sets the intent, nothing else. */
+    {
+        static unsigned long sLastPhysics = 0;
+        unsigned long now = (unsigned long)TickCount();
+        short steps = 0;
+        short wasCamX = sCamX;
+        short wasCamY = sCamY;
+        short wasTileX = (short)(sPlayer.x >> 16);
+        short wasTileY = (short)(sPlayer.y >> 16);
+        short wasZ = (short)(sPlayer.z >> 16);
+        Boolean wasGrounded = sPlayer.onGround;
+
+        if (sLastPhysics == 0) {
+            sLastPhysics = now;
+        }
+        while (sLastPhysics != now && steps < 3) {
+            Player_Step(&sPlayer, sIntentX, sIntentY, sJumpHeld);
+            sLastPhysics++;
+            steps++;
+        }
+
+        if (steps > 0) {
+            short tileX = (short)(sPlayer.x >> 16);
+            short tileY = (short)(sPlayer.y >> 16);
+
+            /* A footstep when the tile changes under a walking player, and one
+             * when the feet come back down -- so a fall lands audibly too. */
+            if ((tileX != wasTileX || tileY != wasTileY) && sPlayer.onGround) {
+                Sfx_Play(kSfxStep);
+            }
+            if (sPlayer.onGround && !wasGrounded) {
+                Sfx_Play(kSfxStep);
+            }
+
+            /* Walk cycle: advance while moving on the ground, reset in the air. */
+            if (!sPlayer.onGround) {
+                sWalkPhase = 0;
+            }
+            else if (tileX != wasTileX || tileY != wasTileY) {
+                sWalkPhase = (short)((sWalkPhase + 1) & 7);
+            }
+
+            CentreOnPlayer();
+
+            /* Repaint only when something a viewer can see moved. */
+            if (sCamX != wasCamX || sCamY != wasCamY) {
+                MarkDirty(&sDisplayRect);
+            }
+            else if (tileX != wasTileX || tileY != wasTileY ||
+                     (short)(sPlayer.z >> 16) != wasZ) {
+                Rect figure;
+
+                PlayerFigureRect(&figure);
+                MarkDirty(&figure);
+            }
+
+            /* One key press is one nudge, not a held movement. */
+            sIntentX = 0;
+            sIntentY = 0;
+            sJumpHeld = false;
+        }
+    }
+
+    /* Commands from the harness, at most once a second: see remote.h for why the
+     * shared folder is the input channel and the keyboard is not. */
+    {
+        static unsigned long sLastRemote = 0;
+        unsigned long now = (unsigned long)TickCount();
+
+        if ((unsigned long)(now - sLastRemote) > 60) {
+            char cmd[64];
+
+            sLastRemote = now;
+            if (Remote_Take(cmd, (short)sizeof(cmd))) {
+                ApplyRemoteCommand(cmd);
+                Remote_Ack(cmd);
             }
         }
     }
