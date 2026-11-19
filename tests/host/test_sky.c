@@ -2,13 +2,23 @@
  *
  * Sky_Draw itself is QuickDraw and is compiled out on the host (the compat
  * <Types.h> shim has no GrafPtr/Rect); everything it is built from is tested
- * here: the band colours, their RGBColor expansion, the 1-bit density ramp and
- * the cloud wrap.
+ * here: the band colours, their RGBColor expansion, the 1-bit density ramp,
+ * the cloud drift and the slab layout.
  */
 
 #include <stdio.h>
 
 #include "sky.h"
+
+/*
+ * Internal cloud-layout accessors.  sky.h is the drawing-facing contract;
+ * these two exist so the host test can verify the slab tiling without keeping
+ * a duplicate copy of the table.  sky.c defines them next to the table and
+ * uses them in Sky_Draw.
+ */
+short Sky_CloudRectCount(void);
+void Sky_CloudRect(short index, short *x, short *y, short *width,
+                   short *height, short *undersideY);
 
 static int sFailures;
 
@@ -34,7 +44,7 @@ static void TestBandColoursAreLegal(void)
 {
     short bandCount;
 
-    for (bandCount = 2; bandCount <= 17; bandCount++) {
+    for (bandCount = 2; bandCount <= 25; bandCount++) {
         short band;
 
         for (band = 0; band < bandCount; band++) {
@@ -69,7 +79,7 @@ static void TestBandsMonotonic(void)
 {
     short bandCount;
 
-    for (bandCount = 2; bandCount <= 17; bandCount++) {
+    for (bandCount = 2; bandCount <= 25; bandCount++) {
         short band;
         unsigned short previousBlue = Component(Sky_BandRGB(0, bandCount), 0);
 
@@ -125,7 +135,7 @@ static void TestBandClamping(void)
  * horizon, and coarse enough to be a dither ladder (at most ten levels). */
 static void TestDensityRamp(void)
 {
-    static const short kCounts[] = { 2, 3, 4, 8, 10, 16, 32, 64 };
+    static const short kCounts[] = { 2, 3, 4, 8, 10, 16, 24, 32, 64 };
     unsigned int i;
 
     for (i = 0; i < sizeof kCounts / sizeof kCounts[0]; i++) {
@@ -204,6 +214,40 @@ static void TestCloudShiftWraps(void)
     CHECK(Sky_CloudShift((long)kSkyCloudTicksPerPixel * kSkyCloudPeriod * 2) == 0);
 }
 
+/* Cloud slabs: every rectangle is a real, positive rectangle that fits wholly
+ * inside one period (so translating the tiled field by Sky_CloudShift cannot
+ * split it across the wrap), and its shaded underside starts on the first row
+ * below the body. */
+static void TestCloudLayout(void)
+{
+    short count = Sky_CloudRectCount();
+    short i;
+
+    /* Two "few" groups of 3-6 rectangles each. */
+    CHECK(count >= 6);
+    CHECK(count <= 12);
+
+    for (i = 0; i < count; i++) {
+        short x, y, width, height, undersideY;
+
+        Sky_CloudRect(i, &x, &y, &width, &height, &undersideY);
+
+        /* No straddling of the period boundary. */
+        CHECK(x >= 0);
+        CHECK(x + width <= kSkyCloudPeriod);
+
+        CHECK(width > 0);
+        CHECK(height > 0);
+        CHECK(y >= 0);
+
+        /* The darker underside is one row, immediately below the body: its
+         * top row is the first row the body does not occupy. */
+        CHECK(undersideY == y + height);
+        CHECK(undersideY >= y + height);
+        CHECK(undersideY > y);
+    }
+}
+
 int main(void)
 {
     TestBandColoursAreLegal();
@@ -211,6 +255,7 @@ int main(void)
     TestBandClamping();
     TestDensityRamp();
     TestCloudShiftWraps();
+    TestCloudLayout();
 
     if (sFailures != 0) {
         fprintf(stderr, "test_sky: %d failure(s)\n", sFailures);

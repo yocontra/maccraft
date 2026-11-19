@@ -3,17 +3,22 @@
  *
  * The old World_Reset plateau was a 12x12 slab of one block type, which reads
  * as a single green diamond from the fixed isometric camera.  This scene is
- * composed instead: a sea around an elliptical island, a beach at the
- * waterline, a raised grass plateau with dirt-cut edges, a stone ridge with
- * snow caps and exposed cobble, an inlet cut into the south-west coast, one
- * small hut and three trees.
+ * composed instead: a finite elliptical island with a raised grass plateau,
+ * dirt-cut edges, a cobblestone ridge with a stone crown and snow caps, a
+ * beach-rimmed lagoon, one small hut and three trees.
+ *
+ * The world is not filled wall to wall.  Only the island footprint - the
+ * coast ellipse and the lagoon cut into it - carries blocks; everything
+ * outside it stays empty, so the sky is the backdrop rather than a dark
+ * bedrock plate.
  *
  * Everything is deterministic integer geometry - no rand(), no clock, no
  * floating point - and every write goes through World_Set, so the world's
  * bounds are enforced by the one module that owns them.
  *
- * Height convention: z = 0 is bedrock everywhere, the sea surface is the
- * single water layer at z = 1, and land starts one block above it at z = 2.
+ * Height convention: z = 0 is bedrock under the island, the lagoon surface is
+ * the single water layer at z = 1, and the sand shelf that meets it is one
+ * block higher at z = 2.
  */
 
 #include "scene.h"
@@ -42,8 +47,8 @@ enum {
 #define kSeaLevel 1
 
 /* Island silhouette: an ellipse with a deterministic coastal wobble.  The
- * radii keep at least four cells of open water inside the world border, so
- * the camera never sees the map end in land. */
+ * radii keep the coast well inside the world border; the cells beyond it are
+ * left empty so the island reads against the sky. */
 #define kIslandCX 24
 #define kIslandCY 24
 #define kIslandRX 20
@@ -105,8 +110,8 @@ static Boolean InPlateau(short x, short y)
 }
 
 /* 0 when the cell is not part of the ridge, otherwise its surface height.
- * The threshold bands make four readable terraces: base, shoulder, peak and
- * the two-cell cap. */
+ * The ridge tops out two blocks above the plateau (z = 5): high enough to
+ * break the silhouette, low enough not to mask the rest of the scene. */
 static short RidgeHeight(short x, short y)
 {
     int dx = AbsInt((int)x - kRidgeCX);
@@ -114,13 +119,11 @@ static short RidgeHeight(short x, short y)
     int wobble = (((int)x * 7 + (int)y * 5) % 5) - 2;
     int d = dx * 2 + dy * 3 + wobble;
 
-    if (d <= 3)
-        return 6;
-    if (d <= 8)
+    if (d <= 4)
         return 5;
-    if (d <= 13)
+    if (d <= 9)
         return 4;
-    if (d <= 18)
+    if (d <= 14)
         return 3;
     return 0;
 }
@@ -131,8 +134,17 @@ static Boolean IsSnowCap(short x, short y)
                      (x == kRidgeCX && y == kRidgeCY + 1));
 }
 
-/* Land surface height, or -1 for open water.  The ridge wins over the
- * plateau so the massif grows out of the grass instead of being flattened. */
+/* The two dark stone blocks left after the snow caps: stone belongs on the
+ * silhouette, while the faces the camera sees are cobblestone. */
+static Boolean IsStoneCrown(short x, short y)
+{
+    return (Boolean)((x == kRidgeCX - 1 && y == kRidgeCY) ||
+                     (x == kRidgeCX + 1 && y == kRidgeCY));
+}
+
+/* Land surface height, or -1 where the coast ellipse does not reach (the
+ * lagoon is carved out afterwards).  The ridge wins over the plateau so the
+ * massif grows out of the grass instead of being flattened. */
 static short TerrainHeight(short x, short y)
 {
     short ridge;
@@ -150,26 +162,33 @@ static short TerrainHeight(short x, short y)
     return 2;
 }
 
-static Boolean InInlet(short x, short y)
+/* A small interior lagoon in the south-west lowland, with a second lobe so
+ * its shoreline is not a circle.  It stays clear of the coast: water at the
+ * edge of a floating island would read as a hole rather than a pond. */
+static Boolean InLagoon(short x, short y)
 {
-    int dx = (int)x - 13;
-    int dy = (int)y - 35;
+    int dx = (int)x - 16;
+    int dy = (int)y - 33;
 
-    /* Lagoon in the south-west lowland ... */
-    if (dx * dx + dy * dy <= 25)
+    if (dx * dx + dy * dy <= 9)
         return true;
 
-    /* ... a second lobe so the waterline is not a circle ... */
-    dx = (int)x - 16;
-    dy = (int)y - 32;
-    if (dx * dx + dy * dy <= 8)
-        return true;
-
-    /* ... and a three-wide channel out to the open sea. */
-    if (x >= 12 && x <= 14 && y >= 35)
+    dx = (int)x - 20;
+    dy = (int)y - 30;
+    if (dx * dx + dy * dy <= 4)
         return true;
 
     return false;
+}
+
+/* Footprint of the scene: the coast ellipse plus the lagoon cut into it.
+ * Nothing is written outside this set, so there is no world-sized bedrock
+ * plate for the renderer to draw. */
+static Boolean IsSceneCell(short x, short y)
+{
+    if (x < 0 || x >= kWorldX || y < 0 || y >= kWorldY)
+        return false;
+    return (Boolean)(IsIsland(x, y) || InLagoon(x, y));
 }
 
 static void ClearWorld(void)
@@ -197,6 +216,8 @@ static void BuildTerrain(void)
 
     for (x = 0; x < kWorldX; x++) {
         for (y = 0; y < kWorldY; y++) {
+            if (!IsSceneCell(x, y))
+                continue;
             top = TerrainHeight(x, y);
             if (top < 0)
                 World_Set(x, y, kSeaLevel, kBlockWater);
@@ -206,13 +227,13 @@ static void BuildTerrain(void)
     }
 }
 
-static void CarveInlet(void)
+static void CarveLagoon(void)
 {
     short x, y, z;
 
     for (x = 0; x < kWorldX; x++) {
         for (y = 0; y < kWorldY; y++) {
-            if (!InInlet(x, y))
+            if (!InLagoon(x, y))
                 continue;
             for (z = kSeaLevel; z < kWorldZ; z++)
                 World_Set(x, y, z, kBlockEmpty);
@@ -244,24 +265,66 @@ static Boolean IsGravelPatch(short x, short y)
                      (((int)x * 7 + (int)y * 3) % 23) == 0);
 }
 
-/* Flatten every land cell that touches water to a sand shelf at the
- * waterline.  Cutting the shore down instead of leaving a one-block cliff is
- * what makes the water read as a beach rather than a flooded hole. */
+/* Flatten a land column to a sand shelf one level above the water.  The
+ * shelf is what makes the lagoon read as a shore with a visible step rather
+ * than a hole cut into the ground. */
+static void MakeShelf(short x, short y)
+{
+    short z;
+
+    for (z = kSeaLevel + 2; z < kWorldZ; z++)
+        World_Set(x, y, z, kBlockEmpty);
+    World_Set(x, y, kSeaLevel, kBlockSand);
+    World_Set(x, y, kSeaLevel + 1,
+              IsGravelPatch(x, y) ? kBlockGravel : kBlockSand);
+}
+
+/* Every land cell that touches the lagoon gets a sand shelf. */
 static void BuildBeaches(void)
 {
-    short x, y, z;
+    short x, y;
 
     for (x = 0; x < kWorldX; x++) {
         for (y = 0; y < kWorldY; y++) {
+            if (!IsIsland(x, y))
+                continue;
             if (World_Get(x, y, kSeaLevel) == kBlockWater)
                 continue;
             if (!TouchesWater(x, y))
                 continue;
+            MakeShelf(x, y);
+        }
+    }
+}
 
-            for (z = kSeaLevel + 1; z < kWorldZ; z++)
-                World_Set(x, y, z, kBlockEmpty);
-            World_Set(x, y, kSeaLevel,
-                      IsGravelPatch(x, y) ? kBlockGravel : kBlockSand);
+static Boolean TouchesOutside(short x, short y)
+{
+    short i, nx, ny;
+
+    for (i = 0; i < 4; i++) {
+        nx = (short)(x + kDirs[i][0]);
+        ny = (short)(y + kDirs[i][1]);
+        if (!IsSceneCell(nx, ny))
+            return true;
+    }
+    return false;
+}
+
+/* Sand around the outer coast, so the island edge is a beach rim rather than
+ * a cut-off slab of grass. */
+static void BuildCoast(void)
+{
+    short x, y;
+
+    for (x = 0; x < kWorldX; x++) {
+        for (y = 0; y < kWorldY; y++) {
+            if (!IsIsland(x, y))
+                continue;
+            if (World_Get(x, y, kSeaLevel) == kBlockWater)
+                continue;
+            if (!TouchesOutside(x, y))
+                continue;
+            MakeShelf(x, y);
         }
     }
 }
@@ -300,9 +363,10 @@ static void EdgeGrassWithDirt(void)
     }
 }
 
-/* Turn the ridge columns to stone, with cobble on every terrace lip and snow
- * on the two highest cells.  Columns lowered by the beach pass are skipped:
- * a shore is sand, not a stone cliff. */
+/* Raise the ridge in cobblestone, with snow on its two summit cells and
+ * stone only on the two crown cells that shape the silhouette.  Filling the
+ * visible side faces with cobble keeps the massif from rendering as a black
+ * wedge.  Columns lowered to a coast shelf are skipped: a shore is sand. */
 static void BuildRidge(void)
 {
     short x, y, z, h;
@@ -314,14 +378,14 @@ static void BuildRidge(void)
                 continue;
 
             for (z = 1; z < h; z++)
-                World_Set(x, y, z, kBlockStone);
+                World_Set(x, y, z, kBlockCobble);
 
             if (IsSnowCap(x, y))
                 World_Set(x, y, h, kBlockSnow);
-            else if (HasLowerNeighbour(x, y, h))
-                World_Set(x, y, h, kBlockCobble);
-            else
+            else if (IsStoneCrown(x, y))
                 World_Set(x, y, h, kBlockStone);
+            else
+                World_Set(x, y, h, kBlockCobble);
         }
     }
 }
@@ -443,20 +507,23 @@ void Scene_BuildIsland(void)
 
     ClearWorld();
 
-    /* Bedrock under every cell first: the sea floor and the land share it,
-     * so a panned camera never looks through the world into empty space. */
+    /* Bedrock only under the island footprint.  Writing it everywhere would
+     * cover the whole 48x48 world in a near-black base plate; cells outside
+     * the coast stay empty so the sky is the background. */
     for (x = 0; x < kWorldX; x++)
         for (y = 0; y < kWorldY; y++)
-            World_Set(x, y, 0, kBlockBedrock);
+            if (IsSceneCell(x, y))
+                World_Set(x, y, 0, kBlockBedrock);
 
     BuildTerrain();
-    CarveInlet();
+    CarveLagoon();
     BuildBeaches();
+    BuildCoast();
     EdgeGrassWithDirt();
     BuildRidge();
     BuildHut();
 
     PlantTree(17, 22, 0);
-    PlantTree(20, 30, 3);
+    PlantTree(24, 30, 3);
     PlantTree(29, 28, 1);
 }

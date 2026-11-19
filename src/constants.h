@@ -105,8 +105,11 @@ enum {
  * index sBlockType maps to block id sBlockType + 1. */
 enum {
     kGameNumBlockTypes      = 14,
-    kGameBlockSwatchSize    = 24,
-    kGameBlockSwatchSpacing = 12,
+    /* 14 kinds must fit the selector width: 14 * (18 + 8) - 8 = 356 px. The old
+     * 24/12 pitch needed 492 px, so the outer swatches were clipped away and the
+     * strip silently showed a subset of the palette. */
+    kGameBlockSwatchSize    = 18,
+    kGameBlockSwatchSpacing = 8,
     kGameCameraPanX         = 16, /* one iso tile step horizontally */
     kGameCameraPanY         = 8,  /* one iso tile step vertically */
     kGameCameraLimit        = 2048

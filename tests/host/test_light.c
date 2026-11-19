@@ -84,18 +84,18 @@ static void TestOcclusionSteps(void)
     CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 256);
 
     CHECK(World_Set(25, 24, 2, 1));
-    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 224);
+    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 248);
 
     CHECK(World_Set(23, 24, 2, 1));
-    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 192);
+    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 240);
 
     CHECK(World_Set(24, 25, 2, 1));
-    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 160);
+    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 232);
 
     /* Saturation: more occluders cannot darken the face further. */
     CHECK(World_Set(24, 23, 2, 1));
     CHECK(World_Set(24, 24, 2, 1));
-    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 160);
+    CHECK(Light_Occlusion(24, 24, 1, kLightFaceTop) == 232);
 }
 
 static void TestOcclusionSides(void)

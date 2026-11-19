@@ -207,6 +207,13 @@ if [ ! -d "$MNT/System Folder" ]; then
     die "$CLONE did not mount a Mac OS 9 volume (no 'System Folder' at $MNT)"
 fi
 
+# The desktop picture owns most of the 256-entry CLUT on a stock Mac OS 9
+# install: it derives a palette from the image, which leaves almost no greys, so
+# an application drawing mid-greys (stone, cobblestone) gets black instead. The
+# test clone drops the picture so the guest runs on the standard Mac palette and
+# screenshots mean something. This touches only the disposable clone.
+rm -rf "$MNT/Desktop Folder/"* 2>/dev/null || true
+
 STARTUP="$MNT/System Folder/Startup Items"
 mkdir -p "$STARTUP"
 rm -rf "$STARTUP/MacCraft"
@@ -293,6 +300,14 @@ rmdir "$MNT" 2>/dev/null || true
 # ---------------------------------------------------------------------------
 
 mkdir -p "$VM_DIR"
+# Carry the PRAM across. SheepShaver keeps the video depth there, and a fresh
+# .sheepvm with no nvram comes up at 16 colours: on such a device an application
+# cannot show more than 16 colours at once, which turned every mid-grey block
+# (stone, cobblestone) black and every textured sprite white. The clone gets the
+# same 256-colour screen the user's own VM runs.
+if [ -f "$HOME/Library/Application Support/MacOS9/MacOS.sheepvm/nvram" ]; then
+    cp "$HOME/Library/Application Support/MacOS9/MacOS.sheepvm/nvram" "$VM_DIR/nvram"
+fi
 ln -s "$ROM" "$VM_DIR/Mac OS ROM"
 ln -s "$CLONE" "$VM_DIR/MacOS9Test.sparsebundle"
 

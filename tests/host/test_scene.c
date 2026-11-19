@@ -1,8 +1,9 @@
 /* test_scene.c - host tests for the hand-authored island scene.
  *
  * These assert the shape the scene is supposed to have, not the coordinates
- * it happens to use: materials present, one-depth water with a sand shoreline,
- * real elevation, trees above trunks, a built structure, and determinism.
+ * it happens to use: materials and footprint containment, one-depth water
+ * with a raised sand shelf, real elevation, trees above trunks, a built
+ * structure, and determinism.
  */
 
 #include <stdio.h>
@@ -69,6 +70,52 @@ static Boolean IsBeachMaterial(BlockID id)
     return (Boolean)(id == kBlockSand || id == kBlockGravel);
 }
 
+/* Mirror of scene.c's footprint test.  The builder may only write cells in
+ * this set; the test recomputes it rather than trusting block contents, so a
+ * stray bedrock write outside the island is caught. */
+#define kIslandCX 24
+#define kIslandCY 24
+#define kIslandRX2 400
+#define kIslandRY2 289
+
+static int AbsInt(int v)
+{
+    return v < 0 ? -v : v;
+}
+
+static Boolean TestIsIsland(short x, short y)
+{
+    int dx = (int)x - kIslandCX;
+    int dy = (int)y - kIslandCY;
+    int ax = AbsInt(dx);
+    int ay = AbsInt(dy);
+    int wobble = (((int)x * 5 + (int)y * 3) % 7) - 3;
+    int lhs = ax * ax * kIslandRY2 + ay * ay * kIslandRX2;
+    int rhs = kIslandRX2 * kIslandRY2 + wobble * 3200;
+
+    return (Boolean)(lhs <= rhs);
+}
+
+static Boolean TestInLagoon(short x, short y)
+{
+    int dx = (int)x - 16;
+    int dy = (int)y - 33;
+
+    if (dx * dx + dy * dy <= 9)
+        return true;
+
+    dx = (int)x - 20;
+    dy = (int)y - 30;
+    return (Boolean)(dx * dx + dy * dy <= 4);
+}
+
+static Boolean TestInFootprint(short x, short y)
+{
+    if (x < 0 || x >= kWorldX || y < 0 || y >= kWorldY)
+        return false;
+    return (Boolean)(TestIsIsland(x, y) || TestInLagoon(x, y));
+}
+
 /* A material-rich scene, and no garbage ids leaking out of the builder. */
 static void TestMaterialsAndBounds(void)
 {
@@ -105,15 +152,9 @@ static void TestMaterialsAndBounds(void)
     CHECK(counts[kBlockPlanks] > 0);
     CHECK(counts[kBlockBedrock] > 0);
 
-    /* The sea floor and land share a continuous bedrock layer, so no camera
-     * position can look through the world. */
-    for (x = 0; x < kWorldX; x++)
-        for (y = 0; y < kWorldY; y++)
-            CHECK(World_Get(x, y, 0) == kBlockBedrock);
-
     /* The accessors clamp out-of-range reads; the builder must not have
-     * relied on that for its shape.  The island is inside open water, so no
-     * border column rises above the sea. */
+     * relied on that for its shape.  The island floats in empty sky, so no
+     * border column carries a block. */
     CHECK(World_Get(-1, 0, 0) == kBlockEmpty);
     CHECK(World_Get(kWorldX, 0, 0) == kBlockEmpty);
     CHECK(World_Get(0, -1, 0) == kBlockEmpty);
@@ -122,18 +163,44 @@ static void TestMaterialsAndBounds(void)
     CHECK(World_Get(0, 0, kWorldZ) == kBlockEmpty);
 
     for (x = 0; x < kWorldX; x++) {
-        CHECK(World_TopZ(x, 0) <= kSeaLevel);
-        CHECK(World_TopZ(x, kWorldY - 1) <= kSeaLevel);
+        CHECK(World_TopZ(x, 0) == -1);
+        CHECK(World_TopZ(x, kWorldY - 1) == -1);
     }
     for (y = 0; y < kWorldY; y++) {
-        CHECK(World_TopZ(0, y) <= kSeaLevel);
-        CHECK(World_TopZ(kWorldX - 1, y) <= kSeaLevel);
+        CHECK(World_TopZ(0, y) == -1);
+        CHECK(World_TopZ(kWorldX - 1, y) == -1);
     }
 }
 
-/* Water is a single layer sitting on bedrock, and every in-world land cell
- * that touches it is beach.  That is what makes it a shoreline instead of a
- * blue patch of floor. */
+/* The dark plate bug: nothing may exist outside the island footprint, and
+ * every footprint column must have its bedrock base. */
+static void TestContainment(void)
+{
+    short x, y, z;
+    int footprint = 0;
+
+    Scene_BuildIsland();
+
+    for (x = 0; x < kWorldX; x++) {
+        for (y = 0; y < kWorldY; y++) {
+            if (TestInFootprint(x, y)) {
+                footprint++;
+                CHECK(World_Get(x, y, 0) == kBlockBedrock);
+                CHECK(World_TopZ(x, y) >= kSeaLevel);
+                continue;
+            }
+            for (z = 0; z < kWorldZ; z++)
+                CHECK(World_Get(x, y, z) == kBlockEmpty);
+        }
+    }
+
+    CHECK(footprint > 500);
+    CHECK(footprint < kWorldX * kWorldY);
+}
+
+/* Water is a single layer sitting on bedrock, and every land cell that
+ * touches it carries a sand shelf one level higher.  That step is what makes
+ * the lagoon a shoreline instead of a blue patch of floor. */
 static void TestWaterAndShore(void)
 {
     short x, y, z, i, nx, ny, top;
@@ -158,7 +225,7 @@ static void TestWaterAndShore(void)
         }
     }
 
-    CHECK(water > 300);
+    CHECK(water > 15);
 
     for (x = 0; x < kWorldX; x++) {
         for (y = 0; y < kWorldY; y++) {
@@ -173,21 +240,21 @@ static void TestWaterAndShore(void)
                 if (World_Get(nx, ny, kSeaLevel) == kBlockWater)
                     continue;
 
-                /* This is the shoreline: land at the water's edge.  The
-                 * shelf itself must be beach, even where a tree canopy
-                 * overhangs it. */
+                /* Land at the water's edge: its shelf sits at z = 2, one
+                 * level above the water, and must be sand or gravel even
+                 * where a tree canopy overhangs it. */
                 shoreEdges++;
                 top = World_TopZ(nx, ny);
-                CHECK(top >= kSeaLevel);
-                CHECK(IsBeachMaterial(World_Get(nx, ny, kSeaLevel)));
+                CHECK(top >= kSeaLevel + 1);
+                CHECK(IsBeachMaterial(World_Get(nx, ny, kSeaLevel + 1)));
             }
         }
     }
 
-    CHECK(shoreEdges > 100);
+    CHECK(shoreEdges > 15);
 }
 
-/* Elevation: sea at 1, lowland at 2, plateau at 3, ridge to 6, structures
+/* Elevation: sea at 1, beach shelf at 2, plateau at 3, ridge to 5, structures
  * and canopies above that.  The column count per height proves it is terrain,
  * not a recoloured slab. */
 static void TestElevation(void)
@@ -205,6 +272,8 @@ static void TestElevation(void)
     int gravel = 0;
     int snow = 0;
     int cobble = 0;
+    int stone = 0;
+    int highRock = 0;
     int dirtTops = 0;
 
     Scene_BuildIsland();
@@ -241,6 +310,13 @@ static void TestElevation(void)
                     snow++;
                 if (World_Get(x, y, z) == kBlockCobble)
                     cobble++;
+                if (World_Get(x, y, z) == kBlockStone)
+                    stone++;
+                if (z > 5 &&
+                    (World_Get(x, y, z) == kBlockCobble ||
+                     World_Get(x, y, z) == kBlockStone ||
+                     World_Get(x, y, z) == kBlockSnow))
+                    highRock++;
             }
         }
     }
@@ -264,6 +340,10 @@ static void TestElevation(void)
     CHECK(gravel > 0);
     CHECK(snow >= 1);
     CHECK(cobble > 0);
+    /* The ridge tops out two levels above the plateau (z = 5) and stone is
+     * only the silhouette crown, not the bulk. */
+    CHECK(highRock == 0);
+    CHECK(stone > 0 && stone <= 8);
 }
 
 static void TestTreesAndStructure(void)
@@ -367,6 +447,7 @@ static void TestDeterminism(void)
 int main(void)
 {
     TestMaterialsAndBounds();
+    TestContainment();
     TestWaterAndShore();
     TestElevation();
     TestTreesAndStructure();

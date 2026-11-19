@@ -51,16 +51,6 @@ static void GameWindow_Render(void);
 static void DrawWorld(Rect *view);
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
                       short y3, BlockID id, short face, short shade, short variation);
-/* The selector still wants a single pattern per block. */
-static Pattern *BlockPattern(BlockID id)
-{
-    switch (id) {
-    case 2:  return &qd.ltGray;  /* stone */
-    case 3:  return &qd.white;   /* grass */
-    case 1:
-    default: return &qd.gray;    /* dirt */
-    }
-}
 
 /* Scene and block palette. The patterns are for 1-bit displays; the colours
  * are what a colour display actually fills with. */
@@ -387,6 +377,35 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     KillPoly(poly);
 }
 
+/* The selection box: Minecraft's black wireframe on the block you are looking
+ * at. Drawn after the world so it is never covered. Three edges matter on an
+ * isometric cube -- the three vertical ones at the silhouette corners -- plus
+ * the top diamond; the hidden edges are not drawn, exactly as in the game. */
+static void DrawSelectionBox(short x, short y, short z)
+{
+    short sx, sy;
+
+    Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
+    sx += sDisplayRect.left;
+    sy += sDisplayRect.top;
+
+    PenNormal();
+    PenPat(&qd.black);
+    MoveTo(sx, (short)(sy - kTileH / 2));
+    LineTo((short)(sx + kTileW / 2), sy);
+    LineTo(sx, (short)(sy + kTileH / 2));
+    LineTo((short)(sx - kTileW / 2), sy);
+    LineTo(sx, (short)(sy - kTileH / 2));
+
+    /* Near vertical edge, then the two silhouette ones. */
+    MoveTo(sx, (short)(sy + kTileH / 2));
+    LineTo(sx, (short)(sy + kTileH / 2 + kTileH));
+    MoveTo((short)(sx - kTileW / 2), sy);
+    LineTo((short)(sx - kTileW / 2), (short)(sy + kTileH / 2));
+    MoveTo((short)(sx + kTileW / 2), sy);
+    LineTo((short)(sx + kTileW / 2), (short)(sy + kTileH / 2));
+}
+
 /* Draw one block: top diamond plus its two visible side faces, all centred on
  * Iso_Project(x, y, z, ...) and clipped nowhere (the update region clips). */
 static void DrawBlock(short x, short y, short z, BlockID id)
@@ -407,17 +426,36 @@ static void DrawBlock(short x, short y, short z, BlockID id)
                                      Light_Occlusion(x, y, z, kLightFaceRight));
     short topVariation = Block_Variation(x, y, z);
 
+    /* Cull the faces that are buried. Without this every block paints three
+     * faces, so the interior of a hill is a mass of hidden quads drawn under
+     * the visible ones -- wasted work on a 25 MHz machine and, worse, visible
+     * dark seams wherever the geometry is off by a pixel.
+     *
+     * Which neighbour hides which face follows from the projection:
+     * screenX = (x - y) * 16, screenY = (x + y) * 8, so the block at (x, y + 1)
+     * sits one tile down-left (it hides the left face) and (x + 1, y) one tile
+     * down-right (it hides the right). */
+    Boolean showTop   = World_Get(x, y, (short)(z + 1)) == 0;
+    Boolean showLeft  = World_Get(x, (short)(y + 1), z) == 0;
+    Boolean showRight = World_Get((short)(x + 1), y, z) == 0;
+
     /* Top face: diamond centred at (sx, sy), kTileW x kTileH. */
-    PaintQuad(sx, sy - kTileH / 2, sx + kTileW / 2, sy, sx, sy + kTileH / 2, sx - kTileW / 2, sy,
-              id, kBlockFaceTop, topShade, topVariation);
+    if (showTop) {
+        PaintQuad(sx, sy - kTileH / 2, sx + kTileW / 2, sy, sx, sy + kTileH / 2,
+                  sx - kTileW / 2, sy, id, kBlockFaceTop, topShade, topVariation);
+    }
 
     /* Left face. */
-    PaintQuad(sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH,
-              sx - kTileW / 2, sy + kTileH / 2, id, kBlockFaceLeft, leftShade, topVariation);
+    if (showLeft) {
+        PaintQuad(sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH,
+                  sx - kTileW / 2, sy + kTileH / 2, id, kBlockFaceLeft, leftShade, topVariation);
+    }
 
     /* Right face. */
-    PaintQuad(sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
-              sx, sy + kTileH, id, kBlockFaceRight, rightShade, topVariation);
+    if (showRight) {
+        PaintQuad(sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
+                  sx, sy + kTileH, id, kBlockFaceRight, rightShade, topVariation);
+    }
 
     /* No outline. A block is separated from its neighbours by the shade step
      * between the top face and the two sides plus the contact shadow, exactly
@@ -590,11 +628,20 @@ static void DrawBlockSelector(void)
         FrameRect(&blockRect);
 
         if (sHasColor) {
-            RGBForeColor(Texture_BaseColor((BlockID)(i + 1), 1));
+            /* Swatches read from the same palette the world does, so the strip
+             * always tells the truth about what a block looks like. */
+            RGBColor swatch = FaceBase((BlockID)(i + 1), kBlockFaceTop, 0);
+
+            RGBForeColor(&swatch);
             PenPat(&qd.black);
         }
         else {
-            PenPat(BlockPattern((BlockID)(i + 1)));
+            /* One bit per pixel: the kind's own grain stencil stands in for the
+             * colour that a 1-bit screen cannot show. */
+            Pattern stamp;
+
+            Block_Grain((BlockID)(i + 1), kBlockFaceTop, 0, (unsigned char *)&stamp);
+            PenPat(&stamp);
         }
         PaintRect(&blockRect);
 
@@ -783,6 +830,16 @@ static void GameWindow_HandleActivate(Boolean becomingActive)
     MarkDirty(&sWindow->portRect);
 }
 
+/* Append C string s to a Pascal string being built in dst, whose length byte
+ * lives at dst[0] and whose current length is *len. No sprintf on a 68000: the
+ * whole strip is assembled by hand. */
+static void AppendToStrip(unsigned char *dst, short *len, const char *s, short max)
+{
+    while (*s != '\0' && *len < max) {
+        dst[++(*len)] = (unsigned char)*s++;
+    }
+}
+
 /* "MacCraft" on the left, block and camera readout on the right. */
 static void DrawTitleStrip(void)
 {
@@ -818,55 +875,36 @@ static void DrawTitleStrip(void)
         centreY = 0;
     }
 
-    /* "block: grass  cam: 24,24" built by hand: no sprintf on the 68000. */
+    /* "block: grass  cam: 24,24" built by hand: no sprintf on the 68000. The
+     * name is the block under the middle of the view -- the one the selection
+     * box is drawn on -- falling back to the kind a click would place when the
+     * tile is empty. */
     len = 0;
-    text[len++] = 7;
+    AppendToStrip(text, &len, "block: ", 200);
     {
-        const char *label = "block: ";
-        short n = 0;
+        short top = World_TopZ(centreX, centreY);
+        BlockID under = (top >= 0) ? World_Get(centreX, centreY, top) : 0;
 
-        while (label[n] != '\0' && len < 200) {
-            text[++len] = (unsigned char)label[n++];
-        }
-        /* text[0] holds the length; start it at 7 once the label is in. */
+        AppendToStrip(text, &len, Block_Name(under != 0 ? under : (BlockID)(sBlockType + 1)), 200);
     }
-    text[0] = 7;
-    {
-        const char *names[4] = {"dirt", "dirt", "stone", "grass"};
-        const char *name = names[sBlockType < 0 || sBlockType > 2 ? 0 : sBlockType + 1];
-        short n = 0;
-
-        while (name[n] != '\0' && len < 200) {
-            text[++len] = (unsigned char)name[n++];
-        }
-    }
-    {
-        const char *tail = "  cam: ";
-        short n = 0;
-
-        while (tail[n] != '\0' && len < 200) {
-            text[++len] = (unsigned char)tail[n++];
-        }
-    }
+    AppendToStrip(text, &len, "  cam: ", 200);
     {
         Str255 num;
+        short d;
 
         NumToString(centreX, num);
-        for (i = 1; i <= num[0] && len < 200; i++) {
-            text[++len] = num[i];
+        for (d = 1; d <= num[0] && len < 200; d++) {
+            text[++len] = num[d];
         }
-        text[++len] = ',';
+        if (len < 200) {
+            text[++len] = ',';
+        }
         NumToString(centreY, num);
-        for (i = 1; i <= num[0] && len < 200; i++) {
-            text[++len] = num[i];
+        for (d = 1; d <= num[0] && len < 200; d++) {
+            text[++len] = num[d];
         }
     }
-    text[++len] = ',';
-    text[++len] = ' ';
-    text[len] = '\0';
-    text[0] = (unsigned char)(len - 1);
-    /* drop the trailing ", " */
-    text[0] = (unsigned char)(text[0] - 2);
+    text[0] = (unsigned char)len;
 
     TextFace(normal);
     MoveTo((short)(strip.right - StringWidth(text) - 2), strip.top + 11);
@@ -908,6 +946,20 @@ static void GameWindow_Render(void)
     /* World blocks (nothing to do when only the selector strip was dirty) */
     if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
         DrawWorld(&sRenderRect);
+
+        /* Selection box on whatever sits under the middle of the view. */
+        {
+            short midX, midY, top;
+
+            if (Iso_Unproject((short)((sDisplayRect.right - sDisplayRect.left) / 2),
+                              (short)((sDisplayRect.bottom - sDisplayRect.top) / 2),
+                              sCamX, sCamY, &midX, &midY)) {
+                top = World_TopZ(midX, midY);
+                if (top >= 0 && World_Get(midX, midY, top) != 0) {
+                    DrawSelectionBox(midX, midY, top);
+                }
+            }
+        }
     }
 
     /* Erase the margins so a partially visible edge tile cannot bleed outside

@@ -13,13 +13,20 @@
 /* Sun factors.  The top catches the full sun; the left face (normal +y,
    pointing down-left on screen) is lit next; the right face (normal +x,
    pointing down-right) turns away from the sun and is darkest. */
-#define kSunTop   256
-#define kSunLeft  208
-#define kSunRight 160
+/* Minecraft's fixed directional shade, which is what makes its blocks read as
+ * blocks: the top face gets full light, the two sides get 80% and 60%. The
+ * left side is the brighter one because the sun sits up and to the left. */
+#define kSunTop   256 /* 1.00 */
+#define kSunLeft  205 /* 0.80 */
+#define kSunRight 154 /* 0.60 */
 
 /* Occlusion is quantised to four levels so faces in the same shadow band
    share a colour; beyond three occluders the face is as dark as it gets. */
-#define kOccluderStep 32
+/* Minecraft's smooth lighting dims a face by at most about a fifth: a corner
+ * tucked against two other blocks is darker, never black. A 32-per-occluder
+ * step took a side face from 0.6 to 0.3 once the sun factor was applied on top,
+ * which is why every cut edge of the island rendered as a black rim. */
+#define kOccluderStep 8
 #define kMaxOccluders 3
 
 static short SolidAt(short x, short y, short z)

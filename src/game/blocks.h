@@ -71,6 +71,10 @@ short Block_Variation(long x, long y, long z);
    -6%) chosen by variation.  Channels clamp at 0xFFFF. */
 BlockColor Block_Tone(BlockColor base, short variation);
 
+/* Human-readable name, for the status strip. Never NULL; unknown ids say
+   "block". */
+const char *Block_Name(BlockID id);
+
 /* Fill out[8] with the kind's pattern for a face, shifted by variation so two
    neighbouring blocks do not stamp the identical 8x8 tile. */
 void Block_Grain(BlockID id, short face, short variation, unsigned char out[8]);

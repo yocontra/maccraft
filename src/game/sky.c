@@ -15,11 +15,13 @@
  * monotonic by construction because it is a rounded linear ramp that is then
  * floored to the quantum, and both operations preserve order.
  *
- * Drawing is kept to one FillRect per band, a horizon strip and a handful of
- * ovals - comfortably under the ~60 QuickDraw calls a 25 MHz machine can
- * afford per frame.  The cloud field repeats every kSkyCloudPeriod pixels and
- * shifts by Sky_CloudShift, so its wrap is seamless.  One stack Pattern is
- * reused for every mono fill; nothing is allocated.
+ * Drawing is one FillRect per band, a horizon strip and two passes over a
+ * handful of cloud rectangles (bodies and undersides).  Sky_Draw runs only
+ * when the display is invalidated, not every tick, so that cost is paid on
+ * pans and resizes rather than on the frame loop.  The cloud field repeats
+ * every kSkyCloudPeriod pixels and shifts by Sky_CloudShift, so its wrap is
+ * seamless.  One stack Pattern is reused for every mono fill; nothing is
+ * allocated.
  */
 
 #include "sky.h"
@@ -28,17 +30,23 @@
  * are close to full because that is what makes a blue sky look washed out and
  * warm near the ground; blue still rises from 7 to 12 so it never darkens. */
 enum {
-    kSkyTopRed = 1,
-    kSkyTopGreen = 3,
-    kSkyTopBlue = 7,
+    /* Minecraft's sky is a single mid blue that only pales near the horizon.
+     * The original top level (1,3,7) is a deep navy that quantises to black on a
+     * 256-colour display, so the top of the sky read as a black band. */
+    kSkyTopRed = 4,
+    kSkyTopGreen = 7,
+    kSkyTopBlue = 12,
     kSkyHorizonRed = 13,
     kSkyHorizonGreen = 12,
     kSkyHorizonBlue = 12
 };
 
-/* Bands in Sky_Draw.  Ten gives a smooth colour ramp while keeping the fill
- * count low; more bands would only repeat 1-bit densities. */
-enum { kSkyBands = 10 };
+/* Bands in Sky_Draw.  Ten bands over a ~590 pixel view meant ~59 pixels of
+ * flat colour per step, which reads as stripes; 24 brings a step down to
+ * roughly 25 pixels and is the most a 25 MHz machine should paint per
+ * invalidate.  The 1-bit densities still quantise to at most seven levels, so
+ * mono screens gain resolution without turning the dither into a solid grey. */
+enum { kSkyBands = 24 };
 
 /* 1-bit ramp: 75% ink at the top, none at the horizon. */
 enum { kSkyTopDensity = 48, kSkyDensityQuantum = 8 };
@@ -132,29 +140,86 @@ short Sky_CloudShift(long ticks)
     return (short)((t / kSkyCloudTicksPerPixel) % kSkyCloudPeriod);
 }
 
+/*
+ * Cloud geometry.  A Minecraft cloud seen edge-on is a flat slab with hard
+ * corners, not a soft blob, so each cloud is a cluster of rectangles in
+ * roughly the same row band: widths differ, neighbours adjoin or overlap, and
+ * the bottom edges step by a pixel or two so the mass has a ragged outline.
+ * Two groups of four and three rectangles sit in one period.  Every rectangle
+ * lies wholly inside [0, kSkyCloudPeriod), so tiling the layout at period
+ * boundaries and translating the field by Sky_CloudShift never splits a
+ * rectangle across the wrap.  y is a fixed offset from the top of the sky:
+ * clouds belong near the top and must not scale down with the view.
+ */
+typedef struct {
+    short x;
+    short y;
+    short width;
+    short height;
+} CloudRect;
+
+/* Declared here rather than in sky.h: the header stays the drawing contract,
+ * while the host test needs the flat layout to verify the tiling. */
+short Sky_CloudRectCount(void);
+void Sky_CloudRect(short index, short *x, short *y, short *width,
+                   short *height, short *undersideY);
+
+static const CloudRect kCloudRects[] = {
+    /* Group 1: four adjoining pieces with a stepped right end. */
+    { 10, 40, 22, 6 },
+    { 28, 42, 18, 5 },
+    { 42, 40, 20, 6 },
+    { 58, 44, 12, 4 },
+    /* Group 2: three pieces, lower and further right, so the sky is not a
+     * single repeated stamp. */
+    { 76, 86, 18, 5 },
+    { 90, 86, 16, 5 },
+    { 102, 88, 12, 4 }
+};
+
+short Sky_CloudRectCount(void)
+{
+    return (short)(sizeof kCloudRects / sizeof kCloudRects[0]);
+}
+
+void Sky_CloudRect(short index, short *x, short *y, short *width,
+                   short *height, short *undersideY)
+{
+    const CloudRect *rect;
+    short count = Sky_CloudRectCount();
+
+    /* Out-of-range indices clamp like the band accessors do; the drawing loop
+     * only ever passes valid ones. */
+    if (index < 0 || index >= count)
+        index = 0;
+    rect = &kCloudRects[index];
+
+    *x = rect->x;
+    *y = rect->y;
+    *width = rect->width;
+    *height = rect->height;
+    *undersideY = (short)(rect->y + rect->height);
+}
+
 #ifndef MACCRAFT_HOST_TYPES_H
 
 /* Solid ink for colour fills (pattern all ones => foreground colour). */
 static Pattern kSolidPattern = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-/* No ink at all; with patCopy this paints the background white, which is what
- * the horizon strip uses on a 1-bit screen. */
+/* No ink at all; with patCopy this paints the background white.  The 1-bit
+ * horizon strip and the cloud slab bodies both use it. */
 static Pattern kClearPattern = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 static const RGBColor kHorizonColor = {0xFFFF, 0xFFFF, 0xEEEE};
-static const RGBColor kCloudColor = {0xFFFF, 0xF8F8, 0xEEEE};
 
-/* Sparse cloud ink for 1-bit screens: 25% reads as a soft grey against both the
- * dark top and the nearly white horizon. */
-enum { kSkyCloudDensity = 16 };
+/* Flat white slab and a slightly blue-grey shaded underside, all byte-repeated
+ * Mac-legal values. */
+static const RGBColor kCloudColor = {0xFFFF, 0xFFFF, 0xF4F4};
+static const RGBColor kCloudUnderColor = {0xC8C8, 0xC8C8, 0xD8D8};
 
-/* Three clouds per period, at different heights and widths so the field does
- * not look like a repeated stamp.  Positions are inside kSkyCloudPeriod. */
-enum { kSkyCloudCount = 3 };
-static const short kCloudX[kSkyCloudCount] = { 10, 54, 96 };
-static const short kCloudY[kSkyCloudCount] = { 4, 11, 7 };  /* /32 of height */
-static const short kCloudW[kSkyCloudCount] = { 30, 20, 15 };
-static const short kCloudH[kSkyCloudCount] = { 6, 5, 4 };
+/* 1-bit clouds: a white body and a 37.5% underside dither, dark enough to read
+ * as thickness against both the dense top and the nearly clean horizon. */
+enum { kSkyCloudUnderDensity = 24 };
 
 /* Build an 8x8 dither with exactly `density` of its 64 bits set, spread as
  * evenly as the accumulator allows.  A Pattern is eight bytes, MSB = leftmost
@@ -206,14 +271,17 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
     GrafPtr savedPort;
     PenState savedPen;
     Pattern pat;
-    Pattern fillPat;
     Rect band;
     Rect line;
+    Rect cloud;
     RGBColor color;
     unsigned short red, green, blue;
+    const Pattern *pattern;
     short height;
     short i;
     short shift;
+    short rectCount;
+    short cx, cy, cw, ch, uy;
     long x;
 
     if (r.bottom <= r.top || r.right <= r.left)
@@ -227,12 +295,9 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
     PenMode(patCopy);
     height = (short)(r.bottom - r.top);
 
-    /* Gradient: one band per fill.  On colour, the pen pattern is solid and
+    /* Gradient: one band per fill.  On colour, the fill pattern is solid and
      * only the foreground colour changes; on 1-bit, only the pattern changes. */
-    if (hasColor)
-        PenPat(&kSolidPattern);
-    fillPat = kSolidPattern;
-
+    pattern = &kSolidPattern;
     for (i = 0; i < kSkyBands; i++) {
         band.top = (short)(r.top + (height * (long)i) / kSkyBands);
         band.bottom = (short)(r.top + (height * (long)(i + 1)) / kSkyBands);
@@ -250,10 +315,9 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
             RGBForeColor(&color);
         } else {
             PatternForDensity(Sky_BandDensity(i, kSkyBands), &pat);
-            PenPat(&pat);
-            fillPat = pat;
+            pattern = &pat;
         }
-        FillRect(&band, &fillPat);
+        FillRect(&band, pattern);
     }
 
     /* Soft horizon: two pale rows at the bottom of the sky. */
@@ -267,38 +331,70 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
     if (line.bottom > line.top) {
         if (hasColor) {
             RGBForeColor(&kHorizonColor);
+            FillRect(&line, &kSolidPattern);
         } else {
-            PenPat(&kClearPattern);
-            fillPat = kClearPattern;
+            FillRect(&line, &kClearPattern);
         }
-        FillRect(&line, &fillPat);
     }
 
-    /* Clouds: the field repeats every kSkyCloudPeriod pixels; shift moves it,
-     * and because the shift wraps at the same period the pattern is continuous
-     * across the wrap.  Start one period left of the view so a cloud whose
-     * body straddles the left edge is still drawn. */
+    /*
+     * Clouds: flat slabs tiled every kSkyCloudPeriod pixels and translated by
+     * Sky_CloudShift.  Because the shift wraps at the period and every slab
+     * fits inside one period, the tiling is continuous across the wrap and no
+     * rectangle is ever split.  Start one period left of the view so a mass
+     * that crosses the left edge is still drawn.
+     *
+     * Undersides go down first: a body painted afterwards covers the part of
+     * a neighbouring edge that falls inside the mass, leaving only the exposed
+     * silhouette and its 1-pixel shaded base.  Bodies go second, all in one
+     * colour, so the foreground colour changes twice per draw rather than
+     * twice per slab.
+     */
     shift = Sky_CloudShift(ticks);
+    rectCount = Sky_CloudRectCount();
 
     if (hasColor) {
-        RGBForeColor(&kCloudColor);
+        RGBForeColor(&kCloudUnderColor);
+        pattern = &kSolidPattern;
     } else {
-        PatternForDensity(kSkyCloudDensity, &pat);
-        PenPat(&pat);
+        PatternForDensity(kSkyCloudUnderDensity, &pat);
+        pattern = &pat;
     }
 
     for (x = (long)r.left - kSkyCloudPeriod; x < (long)r.right;
          x += kSkyCloudPeriod) {
-        for (i = 0; i < kSkyCloudCount; i++) {
-            Rect cloud;
+        for (i = 0; i < rectCount; i++) {
+            Sky_CloudRect(i, &cx, &cy, &cw, &ch, &uy);
 
-            cloud.left = (short)(x + kCloudX[i] + shift);
-            cloud.top = (short)(r.top + (height * (long)kCloudY[i]) / 32);
-            cloud.right = (short)(cloud.left + kCloudW[i]);
-            cloud.bottom = (short)(cloud.top + kCloudH[i]);
+            cloud.left = (short)(x + cx + shift);
+            cloud.top = (short)(r.top + uy);
+            cloud.right = (short)(cloud.left + cw);
+            cloud.bottom = (short)(cloud.top + 1);
 
             if (ClampToSky(&cloud, &r))
-                PaintOval(&cloud);
+                FillRect(&cloud, pattern);
+        }
+    }
+
+    if (hasColor) {
+        RGBForeColor(&kCloudColor);
+        pattern = &kSolidPattern;
+    } else {
+        pattern = &kClearPattern;
+    }
+
+    for (x = (long)r.left - kSkyCloudPeriod; x < (long)r.right;
+         x += kSkyCloudPeriod) {
+        for (i = 0; i < rectCount; i++) {
+            Sky_CloudRect(i, &cx, &cy, &cw, &ch, &uy);
+
+            cloud.left = (short)(x + cx + shift);
+            cloud.top = (short)(r.top + cy);
+            cloud.right = (short)(cloud.left + cw);
+            cloud.bottom = (short)(cloud.top + ch);
+
+            if (ClampToSky(&cloud, &r))
+                FillRect(&cloud, pattern);
         }
     }
 

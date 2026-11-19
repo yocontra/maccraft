@@ -55,24 +55,39 @@ static void TestDistinctTops(void)
     }
 }
 
-static void TestSideLighting(void)
+static Boolean IsCubeLevel(unsigned short value)
+{
+    /* The display quantises each gun to these levels; anything between them
+       loses a step at draw time. */
+    return (Boolean)(value == 0x0000 || value == 0x3333 || value == 0x6666 ||
+                     value == 0x9999 || value == 0xCCCC || value == 0xFFFF);
+}
+
+static void TestSingleHue(void)
+{
+    short id;
+
+    /* The light model shades a side; the palette only chooses the hue.  If a
+       look darkened its own sides the two factors would multiply and the dark
+       kinds would render black. */
+    for (id = kBlockGrass; id <= kBlockKinds; id++) {
+        const BlockLook *look = Block_Look((BlockID)id);
+
+        CHECK(SameColor(look->top, look->left));
+        CHECK(SameColor(look->top, look->right));
+    }
+}
+
+static void TestCubeLevels(void)
 {
     short id;
 
     for (id = kBlockGrass; id <= kBlockKinds; id++) {
         const BlockLook *look = Block_Look((BlockID)id);
 
-        /* The column is lit from the upper left: both sides are darker than
-           the top, and the right side is darker than the left.  Strict on
-           every channel, because a single equal channel would leave a face
-           looking unlit at certain hues. */
-        CHECK(look->left.red < look->top.red);
-        CHECK(look->left.green < look->top.green);
-        CHECK(look->left.blue < look->top.blue);
-
-        CHECK(look->right.red < look->left.red);
-        CHECK(look->right.green < look->left.green);
-        CHECK(look->right.blue < look->left.blue);
+        CHECK(IsCubeLevel(look->top.red));
+        CHECK(IsCubeLevel(look->top.green));
+        CHECK(IsCubeLevel(look->top.blue));
     }
 }
 
@@ -219,7 +234,8 @@ int main(void)
 {
     TestStoneFallback();
     TestDistinctTops();
-    TestSideLighting();
+    TestSingleHue();
+    TestCubeLevels();
     TestVariationNeighbours();
     TestTone();
     TestGrainPresent();
