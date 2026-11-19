@@ -507,10 +507,13 @@ static void ApplyRemoteCommand(const char *cmd)
                 short vals[4];
                 short k;
 
-                vals[0] = tx;
-                vals[1] = ty;
-                vals[2] = tz;
-                vals[3] = face;
+                short bx = 0, by = 0;
+
+                Iso_Project(tx, ty, (short)(tz - 1), sCamX, sCamY, &bx, &by);
+                vals[0] = (short)(bx + sDisplayRect.left);
+                vals[1] = (short)(by + sDisplayRect.top);
+                vals[2] = face;
+                vals[3] = tz;
                 for (k = 0; k < 5; k++) {
                     if (k == 4) {
                         /* The point is inside the tile's diamond, so its centre
@@ -996,28 +999,55 @@ static Boolean RectHasWater(const Rect *r)
 static void DrawSelectionBox(short x, short y, short z)
 {
     short sx, sy;
+    short i;
+    Rect run;
 
     Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
-    sx += sDisplayRect.left;
-    sy += sDisplayRect.top;
+    sx = (short)(sx + sDisplayRect.left);
+    sy = (short)(sy + sDisplayRect.top);
 
+    /* Pixels, not QuickDraw strokes: a stroke is clipped to the paint's update
+     * region, so a repaint that did not include the box left the old one on
+     * screen and the wireframe looked like it was the wrong tile. Two pixels per
+     * row along a 2:1 slope is all the geometry needs. */
+    Sprite_BeginFrame();
+    Sprite_SetView(&sDisplayRect);
 
-    PenNormal();
-    PenSize(1, 1);
-    PenPat(&qd.black);
-    MoveTo(sx, (short)(sy - kTileH / 2));
-    LineTo((short)(sx + kTileW / 2), sy);
-    LineTo(sx, (short)(sy + kTileH / 2));
-    LineTo((short)(sx - kTileW / 2), sy);
-    LineTo(sx, (short)(sy - kTileH / 2));
+    /* Upper half of the diamond, then the lower. */
+    for (i = 0; i <= kTileH / 2; i++) {
+        short rowY = (short)(sy - kTileH / 2 + i);
 
-    /* Near vertical edge, then the two silhouette ones. */
-    MoveTo(sx, (short)(sy + kTileH / 2));
-    LineTo(sx, (short)(sy + kTileH / 2 + kTileH));
-    MoveTo((short)(sx - kTileW / 2), sy);
-    LineTo((short)(sx - kTileW / 2), (short)(sy + kTileH));
-    MoveTo((short)(sx + kTileW / 2), sy);
-    LineTo((short)(sx + kTileW / 2), (short)(sy + kTileH));
+        SetRect(&run, (short)(sx - i * 2), rowY, (short)(sx - i * 2 + 2),
+                (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
+        SetRect(&run, (short)(sx + i * 2 - 1), rowY, (short)(sx + i * 2 + 1),
+                (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
+    }
+    for (i = 0; i <= kTileH / 2; i++) {
+        short rowY = (short)(sy + i);
+
+        SetRect(&run, (short)(sx - kTileW / 2 + i * 2), rowY,
+                (short)(sx - kTileW / 2 + i * 2 + 2), (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
+        SetRect(&run, (short)(sx + kTileW / 2 - i * 2 - 1), rowY,
+                (short)(sx + kTileW / 2 - i * 2 + 1), (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
+    }
+
+    /* The three vertical edges at the silhouette corners. */
+    SetRect(&run, (short)(sx - 1), (short)(sy + kTileH / 2),
+            (short)(sx + 1), (short)(sy + kTileH / 2 + kTileH));
+    Sprite_FillRect(&run, 0x000000UL);
+    SetRect(&run, (short)(sx - kTileW / 2), (short)(sy),
+            (short)(sx - kTileW / 2 + 1), (short)(sy + kTileH));
+    Sprite_FillRect(&run, 0x000000UL);
+    SetRect(&run, (short)(sx + kTileW / 2 - 1), (short)(sy),
+            (short)(sx + kTileW / 2), (short)(sy + kTileH));
+    Sprite_FillRect(&run, 0x000000UL);
+
+    Sprite_SetView(&sDisplayRect);
+    Sprite_EndFrame();
 }
 
 /* Draw one block: top diamond plus its two visible side faces, all centred on
@@ -1467,21 +1497,11 @@ static void GameWindow_Render(void)
                     (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
                     sWalkPhase, (Boolean)!sPlayer.onGround);
         HUD_DrawCrosshair();
+        if (sHoverValid) {
+            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+        }
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
-
-        /* After the frame closes: QuickDraw strokes drawn while the pixel frame
-         * is open are lost when the frame ends. The port is set explicitly
-         * because the coordinates are window-local -- without it the wireframe
-         * lands offset by the window's own position on the desktop. */
-        if (sHoverValid) {
-            GrafPtr savedPort;
-
-            GetPort(&savedPort);
-            SetPort(sWindow);
-            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
-            SetPort(savedPort);
-        }
     }
     else {
         /* A paint that only touches the strip still has to keep the HUD, which
@@ -1490,21 +1510,21 @@ static void GameWindow_Render(void)
          * whenever the play area is anywhere in the clip. */
         Sprite_BeginFrame();
         HUD_DrawCrosshair();
+        {
+            Rect probe;
+
+            /* PROBE: is a 6x6 black square drawn at the display centre? */
+            SetRect(&probe, (short)((sDisplayRect.left + sDisplayRect.right) / 2 - 3),
+                    (short)((sDisplayRect.top + sDisplayRect.bottom) / 2 - 3),
+                    (short)((sDisplayRect.left + sDisplayRect.right) / 2 + 3),
+                    (short)((sDisplayRect.top + sDisplayRect.bottom) / 2 + 3));
+            Sprite_FillRect(&probe, 0x000000UL);
+        }
+        if (sHoverValid) {
+            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+        }
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
-
-        /* After the frame closes: QuickDraw strokes drawn while the pixel frame
-         * is open are lost when the frame ends. The port is set explicitly
-         * because the coordinates are window-local -- without it the wireframe
-         * lands offset by the window's own position on the desktop. */
-        if (sHoverValid) {
-            GrafPtr savedPort;
-
-            GetPort(&savedPort);
-            SetPort(sWindow);
-            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
-            SetPort(savedPort);
-        }
     }
 
     if (fullPaint) {
