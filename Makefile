@@ -41,7 +41,16 @@ universal: check-toolchain
 		exit 1; \
 	}
 
-build: universal
+# One build at a time across the whole machine. This is not hypothetical: several
+# agents share the retro68dev container, and a handful of parallel `cmake --build`
+# jobs saturates every core and makes the host crawl. Both repos use the same
+# lock file by default, so only one compile runs at a time anywhere.
+BUILD_LOCK ?= /tmp/retro68-build.lock
+
+build:
+	@flock -w 3600 $(BUILD_LOCK) $(MAKE) --no-print-directory _build
+
+_build: universal
 	mkdir -p build dist
 	cmake -S . -B build $(CMAKE_OPTS)
 	cmake --build build
