@@ -29,6 +29,20 @@ or SE as well as a Quadra.
 - 768 KB of application memory; a 1 MB partition is comfortable
 - No network, no extensions, no System 7.5 features
 
+## Current state
+
+The world is a hand-authored island — coast, sand shelf, lagoon, plateau, stone
+ridge with snow, a plank hut and trees — rendered as 32x16 isometric tiles with
+one shade per face (top 1.0, left 0.8, right 0.6, dimmed by neighbouring blocks),
+face culling, a Minecraft-style cloud layer, and a selection wireframe on the
+block under the middle of the view.
+
+Block textures are the next step and are already built: `src/game/art.c` holds a
+64-entry shade-ramp palette and sixteen hand-authored 16x16 textures, and
+`src/game/bake.c` shears them onto the renderer's exact quads. Getting an indexed
+bitmap onto this QuickDraw port is unsolved; `docs/textures.md` records what was
+tried, what each attempt proved, and the next three things to try.
+
 ## Building
 
 The build runs inside the upstream Retro68 Docker image, so nothing needs to be
