@@ -179,3 +179,11 @@ Proven through the same path the mouse uses -- `click_started_mine=1` from a
 shift-click, then the break driven to completion by the harness hook, which is
 what `click_removed=1` reports. The harness cannot hold a mouse button, so the
 hook exists for exactly that reason.
+
+## Water, without alpha
+
+There is no alpha on this display, so water is drawn with a **perforated mask**: one
+pixel in four of the water surface is left unpainted and the bed shows through.
+Fifty percent looked like a screen door; a quarter reads as depth, and the
+texture's own wave bands still show. Bands with holes take a per-pixel draw path
+because the run-based fast path would fill the holes in.

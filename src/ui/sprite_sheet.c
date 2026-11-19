@@ -24,6 +24,7 @@
 
 #include "sprite_sheet.h"
 #include "../game/art.h"
+#include "../game/blocks.h"
 #include "../game/bake.h"
 #include "../game/dither.h"
 
@@ -222,7 +223,11 @@ static short RowShade(short face, short row, short height, short shade)
     return shade;
 }
 
-static void PutBand(short band, short width, short height, short shade, short face)
+/* Bands whose mask has holes need the slow draw path: the fast path copies a
+ * whole run and would paint the holes. Only water uses this. */
+static unsigned char sBandHoles[kSpriteBands];
+
+static void PutBand(short band, short width, short height, short shade, short face, BlockID id)
 {
     short row, col;
     Ptr colourBase = (Ptr)sSheet + (long)band * kSpriteBandH * kSpriteW;
@@ -239,6 +244,10 @@ static void PutBand(short band, short width, short height, short shade, short fa
 
         Ptr src = sPixels + (long)row * width;
         Ptr cov = sPixelMask + (long)row * width;
+        /* Water is drawn as a checkerboard so the bed shows through: there is no
+         * alpha on this display, and a 50 % mask is how a classic Mac draws
+         * transparency. */
+        Boolean perforate = (Boolean)(id == kBlockWater);
         Ptr dst = colourBase + (long)row * kSpriteW;
         Ptr mrow = maskBase + (long)row * kMaskRowBytes;
 
@@ -266,12 +275,18 @@ static void PutBand(short band, short width, short height, short shade, short fa
                 }
                 index = sShadeMap[useStep][index < kArtPaletteEntries ? index : 0];
                 dst[col] = sDevice[index];
-                if (cov[col]) {
+                /* A quarter of the pixels are left unpainted: with no alpha, a
+                 * sparse hole pattern reads as depth, while 50 % looked like a
+                 * screen door. */
+                if (cov[col] && !(perforate && (((col + 2 * row) & 3) == 0))) {
                     mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
                     if (first < 0) {
                         first = col;
                     }
                     last = col;
+                }
+                if (perforate) {
+                    sBandHoles[band] = 1;
                 }
             }
             sRunFirst[band * kSpriteBandH + row] = (unsigned char)(first < 0 ? 0 : first);
@@ -310,7 +325,7 @@ Boolean Sprite_Init(void)
             Bake_Face(Art_Texture((BlockID)id, face), face, sPixels, sPixelMask);
             for (shade = 0; shade < kSpriteShades; shade++) {
                 PutBand(BandOf((BlockID)id, face, shade), Bake_FaceWidth(face),
-                        Bake_FaceHeight(face), shade, face);
+                        Bake_FaceHeight(face), shade, face, (BlockID)id);
             }
         }
     }
@@ -619,6 +634,31 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
 
                 *line = word;
                 *line2 = word;
+            }
+        }
+        return;
+    }
+
+    if (sDepth >= 32 && sBandHoles[band]) {
+        Ptr holeMask = (Ptr)sMaskSheet + (long)bandStart * kMaskRowBytes;
+
+        /* Per-pixel: the mask has holes, so a run copy would fill them. */
+        for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
+            short srcRow = (short)(bandStart + row);
+            Ptr mrow = holeMask + (long)row * kMaskRowBytes;
+            const unsigned char *p = bandPixels + (long)row * kSpriteW;
+            unsigned long *line = (unsigned long *)rowBase;
+
+            for (col = 0; col < width; col++) {
+                short x = (short)(originX + col);
+
+                if (x < viewLeft || x >= viewRight || x < 0 || x >= sScreenWidth) {
+                    continue;
+                }
+                if ((mrow[col >> 3] & (unsigned char)(0x80 >> (col & 7))) == 0) {
+                    continue;
+                }
+                line[x] = sPixel32[p[col]];
             }
         }
         return;
