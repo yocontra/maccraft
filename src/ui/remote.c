@@ -66,24 +66,37 @@ static short ShareVolume(void)
 /* Write a stats line into the receipt: paint ticks, paint count, physics steps. */
 /* Defined by the game window: total pixels the world pass has covered. */
 extern long Sprite_PaintedPixels;
+extern long Sprite_Phase[3];
 
 void Remote_ReportStats(long paintTicks, long paints, long steps)
 {
-    char line[64];
+    /* Fixed order, space separated:
+     *   paintTicks paints steps paintedPixels phaseSetup phaseWorld phaseChrome
+     * Every field is decimal, negative allowed. */
+    char line[96];
     short i = 0;
-    long values[4];
+    long values[7];
     short v;
 
     values[0] = paintTicks;
     values[1] = paints;
     values[2] = steps;
     values[3] = Sprite_PaintedPixels;
+    values[4] = Sprite_Phase[0];
+    values[5] = Sprite_Phase[1];
+    values[6] = Sprite_Phase[2];
 
-    for (v = 0; v < 4; v++) {
+    for (v = 0; v < 7; v++) {
         char digits[12];
         short n = 0;
         long value = values[v];
 
+        if (value < 0) {
+            if (i < (short)sizeof(line) - 2) {
+                line[i++] = '-';
+            }
+            value = -value;
+        }
         if (value == 0) {
             digits[n++] = '0';
         }
@@ -100,8 +113,6 @@ void Remote_ReportStats(long paintTicks, long paints, long steps)
     }
     line[i] = '\0';
 
-    /* The receipt is written by Remote_Ack; writing the file here as well would
-     * just be overwritten by it. */
     Remote_SetResult(line);
 }
 

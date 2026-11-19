@@ -72,6 +72,8 @@ long Sprite_Work[6];
  * divided by Sprite_Work[3], and it is what tells a small hover box from a full
  * frame without guessing. */
 long Sprite_PaintedPixels;
+/* Ticks spent in each phase of the last paint: setup, world pass, chrome. */
+long Sprite_Phase[3];
 /* Last painted rectangle: width and height, for the harness receipt. */
 
 
@@ -854,6 +856,50 @@ static void UpdateHover(void)
     sStripDirty = true;
 }
 
+/* True when any column under the rect holds water. Water sprites are drawn with
+ * see-through pixels, so a repaint that skips the sky fill leaves the previous
+ * frame showing through. The scan is padded like the renderer's, and only runs
+ * for partial repaints. */
+static Boolean RectHasWater(const Rect *r)
+{
+    short gx, gy, x, y;
+
+    if (r == NULL || r->right <= r->left || r->bottom <= r->top) {
+        return false;
+    }
+
+    if (!Iso_Unproject((short)(r->left - sDisplayRect.left),
+                       (short)(r->top - sDisplayRect.top), sCamX, sCamY, &gx, &gy)) {
+        gx = (short)(sDisplayRect.right - sDisplayRect.left);
+        gy = 0;
+        if (!Iso_Unproject((short)(r->right - sDisplayRect.left),
+                           (short)(r->bottom - sDisplayRect.top), sCamX, sCamY, &gx, &gy)) {
+            gx = 0;
+            gy = 0;
+        }
+    }
+
+    for (y = (short)(gy - kWorldZ - 2); y <= (short)(gy + kWorldZ + 2); y++) {
+        if (y < 0 || y >= kWorldY) {
+            continue;
+        }
+        for (x = (short)(gx - kWorldZ - 2); x <= (short)(gx + kWorldZ + 2); x++) {
+            short z;
+
+            if (x < 0 || x >= kWorldX) {
+                continue;
+            }
+            for (z = 0; z < kWorldZ; z++) {
+                if (World_Get(x, y, z) == kBlockWater) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 /* The selection box: Minecraft's black wireframe on the block you are looking
  * at. Drawn after the world so it is never covered. Three edges matter on an
  * isometric cube -- the three vertical ones at the silhouette corners -- plus
@@ -1188,6 +1234,10 @@ static void GameWindow_Render(void)
                           sRenderRect.top == sDisplayRect.top &&
                           sRenderRect.bottom == sDisplayRect.bottom);
 
+    Sprite_Phase[0] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]);
+    Sprite_Phase[1] = 0;
+    Sprite_Phase[2] = 0;
+
     if (fullPaint) {
         BackPat(&qd.white);
         DrawStandardFrame(sWindow);
@@ -1254,10 +1304,12 @@ static void GameWindow_Render(void)
         (long)(sRenderRect.bottom - sRenderRect.top);
 
     if (sHasColor && Sprite_Ready()) {
-        /* The sky is only rewritten when the view itself changed. A pointer move
-         * repaints two small boxes over terrain that has not moved, so filling
-         * sky under them only flashes blue before the tiles land. */
-        if (fullPaint || sCamX != sLastCamX || sCamY != sLastCamY) {
+        /* The sky is rewritten when the view changed, and whenever the repainted
+         * rect could contain water: water is drawn with see-through pixels, so
+         * painting it over old content leaves whatever was there -- the pale
+         * specks around a hovered water tile. */
+        if (fullPaint || sCamX != sLastCamX || sCamY != sLastCamY ||
+            RectHasWater(&sRenderRect)) {
             /* Minecraft's sky: one flat blue with flat white clouds, painted
              * through the pixel path so the colours are exactly what is asked
              * for. Scoped to the repaint rect: these writes bypass the update
@@ -1370,6 +1422,8 @@ static void GameWindow_Render(void)
         FrameRect(&sDisplayRect);
     }
 
+    Sprite_Phase[1] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]) - Sprite_Phase[0];
+
     Sprite_BeginFrame();
     Sprite_SetView(&sTitleStripRect);
     HUD_DrawStrip(HoveredBlock(), (BlockID)(sBlockType + 1),
@@ -1379,6 +1433,8 @@ static void GameWindow_Render(void)
     HUD_DrawHotbar((BlockID)(sBlockType + 1), kGameNumBlockTypes);
     Sprite_SetView(&sDisplayRect);
     Sprite_EndFrame();
+
+    Sprite_Phase[2] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]) - Sprite_Phase[0] - Sprite_Phase[1];
 
     sLastCamX = sCamX;
     sLastCamY = sCamY;
@@ -1766,6 +1822,11 @@ void GameWindow_Idle(void)
         short wasTileY = (short)(sPlayer.y >> 16);
         short wasZ = (short)(sPlayer.z >> 16);
         Boolean wasGrounded = sPlayer.onGround;
+        Rect oldFigure;
+
+        /* Where the figure is drawn right now: the step is about to move it, and
+         * without damage there too the old drawing stayed behind as a trail. */
+        PlayerFigureRect(&oldFigure);
 
         if (sLastPhysics == 0) {
             sLastPhysics = now;
@@ -1808,6 +1869,7 @@ void GameWindow_Idle(void)
                      (short)(sPlayer.z >> 16) != wasZ) {
                 Rect figure;
 
+                MarkDirty(&oldFigure);
                 PlayerFigureRect(&figure);
                 MarkDirty(&figure);
             }
