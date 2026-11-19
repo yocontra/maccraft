@@ -105,6 +105,16 @@ void Remote_ReportStats(long paintTicks, long paints, long steps)
     Remote_SetResult(line);
 }
 
+void Remote_AppendResult(const char *text)
+{
+    short n = (short)strlen(sResult);
+
+    while (*text != 0 && n < (short)sizeof(sResult) - 1) {
+        sResult[n++] = *text++;
+    }
+    sResult[n] = 0;
+}
+
 void Remote_Ack(const char *cmd)
 {
     short vRef = ShareVolume();

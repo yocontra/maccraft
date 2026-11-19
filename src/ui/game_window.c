@@ -435,6 +435,8 @@ static short TakeInt(const char **p)
 /* Run a command from the harness: walk, jump, select. Every verb goes through
  * the same code the keyboard and the mouse use, so what the harness proves is
  * what a player gets. */
+static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *outZ);
+
 static void ApplyRemoteCommand(const char *cmd)
 {
     if (strncmp(cmd, "walk", 4) == 0) {
@@ -476,8 +478,96 @@ static void ApplyRemoteCommand(const char *cmd)
         /* Only reached when the launch failed. */
         Remote_SetResult("launch failed");
     }
+    else if (strncmp(cmd, "pick", 4) == 0) {
+        /* Harness: resolve a window-space point through the picker and report
+         * the tile plus where that tile projects, so the two can be compared
+         * without reading pixels. */
+        const char *p = cmd + 4;
+        short px = TakeInt(&p);
+        short py = TakeInt(&p);
+        short tx = 0, ty = 0, tz = 0;
+        char result[64];
+
+        Point probe;
+
+        probe.h = px;
+        probe.v = py;
+
+        if (PickSurfaceAt(probe, &tx, &ty, &tz)) {
+            short sx = 0, sy = 0;
+
+            Iso_Project(tx, ty, (short)(tz - 1), sCamX, sCamY, &sx, &sy);
+            {
+                char *q = result;
+                short vals[4];
+                short k;
+
+                vals[0] = tx;
+                vals[1] = ty;
+                vals[2] = tz;
+                vals[3] = (short)(sx + sDisplayRect.left);
+                for (k = 0; k < 5; k++) {
+                    if (k == 4) {
+                        /* The point is inside the tile's diamond, so its centre
+                         * is where the box will be drawn. */
+                        short digits2[6];
+                        short n2 = 0;
+                        long v2 = (long)(sy + sDisplayRect.top);
+
+                        if (v2 < 0) { *q++ = '-'; v2 = -v2; }
+                        do { digits2[n2++] = (short)(v2 % 10); v2 /= 10; } while (v2 > 0);
+                        while (n2 > 0) { *q++ = (char)('0' + digits2[--n2]); }
+                        break;
+                    }
+                    short digits[6];
+                    short n = 0;
+                    long v = vals[k];
+
+                    if (v < 0) { *q++ = '-'; v = -v; }
+                    do { digits[n++] = (short)(v % 10); v /= 10; } while (v > 0);
+                    while (n > 0) { *q++ = (char)('0' + digits[--n]); }
+                    if (k < 3) { *q++ = ' '; }
+                }
+                *q = 0;
+                (void)sy;
+            }
+        }
+        else {
+            strcpy(result, "none");
+        }
+        Remote_SetResult(result);
+    }
     else if (strncmp(cmd, "stats", 5) == 0) {
         Remote_ReportStats(Sprite_Work[2], Sprite_Work[3], Sprite_Work[5]);
+        {
+            char hover[40];
+            char *q = hover;
+            Point m;
+
+            GetMouse(&m);
+            *q++ = (char)(sHoverValid ? 'V' : '-');
+            *q++ = ' ';
+            {   /* window-space cursor, then the hovered tile */
+                short vals[3];
+                short k;
+
+                vals[0] = (short)(m.h - sDisplayRect.left);
+                vals[1] = sHoverX;
+                vals[2] = sHoverY;
+                for (k = 0; k < 3; k++) {
+                    short digits[6];
+                    short n = 0;
+                    long v = vals[k];
+
+                    if (v < 0) { *q++ = '-'; v = -v; }
+                    do { digits[n++] = (short)(v % 10); v /= 10; } while (v > 0);
+                    while (n > 0) { *q++ = (char)('0' + digits[--n]); }
+                    if (k < 2) { *q++ = ' '; }
+                }
+            }
+            *q = 0;
+            Remote_AppendResult(hover);
+        }
     }
     else if (strncmp(cmd, "save", 4) == 0) {
         Remote_SetResult("save");
@@ -778,6 +868,7 @@ static void DrawSelectionBox(short x, short y, short z)
 
 
     PenNormal();
+    PenSize(1, 1);
     PenPat(&qd.black);
     MoveTo(sx, (short)(sy - kTileH / 2));
     LineTo((short)(sx + kTileW / 2), sy);
@@ -1204,11 +1295,6 @@ static void GameWindow_Render(void)
         }
         Sprite_SetView(&sDisplayRect);
 
-        /* Selection box on the surface under the mouse, which is also where a
-         * click will act. */
-        if (sHoverValid) {
-            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
-        }
         if (sBreaking && sBreakTicks > 0) {
             DrawCrackOverlay(sBreakX, sBreakY, sBreakZ, sBreakTicks);
         }
@@ -1218,6 +1304,13 @@ static void GameWindow_Render(void)
         HUD_DrawCrosshair();
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
+
+        /* After the frame closes: QuickDraw strokes drawn while the pixel frame
+         * is open are lost when the frame ends, which is why the wireframe
+         * disappeared. */
+        if (sHoverValid) {
+            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+        }
     }
     else {
         /* A paint that only touches the strip still has to keep the HUD, which
@@ -1228,6 +1321,13 @@ static void GameWindow_Render(void)
         HUD_DrawCrosshair();
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
+
+        /* After the frame closes: QuickDraw strokes drawn while the pixel frame
+         * is open are lost when the frame ends, which is why the wireframe
+         * disappeared. */
+        if (sHoverValid) {
+            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+        }
     }
 
     if (fullPaint) {

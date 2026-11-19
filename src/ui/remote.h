@@ -31,6 +31,9 @@ Boolean Remote_Launch(const char *name);
 /* Write a one-line stats report into the receipt. */
 void Remote_ReportStats(long paintTicks, long paints, long steps);
 
+/* Append text to the result Remote_Ack will write. */
+void Remote_AppendResult(const char *text);
+
 /* Write the receipt for a command the caller has acted on. */
 void Remote_Ack(const char *cmd);
 
