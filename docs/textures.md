@@ -147,3 +147,23 @@ player's band, and `select n` changes the hotbar and the held block.
 The figure has a walk cycle (legs alternate, torso bobs on alternate phases) and a
 tucked airborne pose, and footsteps and landings play from the tile-change and
 ground-contact events rather than from the key state.
+
+## The character and the terrain
+
+The player was coloured rectangles. It is now a 16x24 pixel figure drawn as
+horizontal runs through the same pixel fills the HUD uses: dark hair, skin, a cyan
+shirt, blue trousers and shoes, three frames (standing, two walk frames with
+alternating legs) plus a tucked airborne pose. Runs rather than per-pixel fills
+because the rows are mostly contiguous colour: about seventy fills a frame instead
+of three hundred and eighty-four.
+
+The island grew (radii 20x17 -> 22x19) and gained a hill with a cave mouth in the
+south-east: a flat island gave the isometric camera nothing to read. The hill is
+kept inland and off the beach ring on purpose -- the scene test holds two
+invariants that a hill rising from the waterline breaks: the sea is exactly one
+block deep, and every land cell that touches water carries a sand or gravel shelf.
+
+`Scene_IsIslandCell` is exported now. The scene test kept its own copy of the
+coast geometry to check containment, and that copy went stale the moment the
+island was resized -- the test failed for a scene that was correct. One owner for
+the coast is the fix.

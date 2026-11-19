@@ -78,22 +78,12 @@ static Boolean IsBeachMaterial(BlockID id)
 #define kIslandRX2 400
 #define kIslandRY2 289
 
-static int AbsInt(int v)
-{
-    return v < 0 ? -v : v;
-}
-
 static Boolean TestIsIsland(short x, short y)
 {
-    int dx = (int)x - kIslandCX;
-    int dy = (int)y - kIslandCY;
-    int ax = AbsInt(dx);
-    int ay = AbsInt(dy);
-    int wobble = (((int)x * 5 + (int)y * 3) % 7) - 3;
-    int lhs = ax * ax * kIslandRY2 + ay * ay * kIslandRX2;
-    int rhs = kIslandRX2 * kIslandRY2 + wobble * 3200;
-
-    return (Boolean)(lhs <= rhs);
+    /* The scene owns the coast geometry. A copy here went stale the moment the
+     * island was resized, and the containment check then failed for a scene that
+     * was correct. */
+    return Scene_IsIslandCell(x, y);
 }
 
 static Boolean TestInLagoon(short x, short y)

@@ -1,8 +1,14 @@
 /* avatar.c - the player's figure.
  *
- * Drawn with the sprite layer's pixel fills rather than a block texture: at two
- * pixels per limb a 16x16 texture would be one bright speck. Coordinates come in
- * as the block the player stands on, so this file needs no game state.
+ * A 16x24 pixel character, drawn as horizontal runs through the sprite layer's
+ * pixel fills. Three frames: standing, and two walk frames whose legs alternate;
+ * in the air the legs tuck. At this size a per-pixel draw would be 384 calls, but
+ * the rows are mostly contiguous colour, so a run-based draw costs about seventy
+ * fills a frame -- and it is the same primitive the HUD already proves works.
+ *
+ * The palette is deliberately small and reads at a glance: dark hair, skin, a
+ * cyan shirt, blue trousers, brown shoes, the colours Minecraft's default
+ * character uses.
  */
 
 #include <Quickdraw.h>
@@ -11,51 +17,217 @@
 #include "sprite_sheet.h"
 #include "../game/iso.h"
 
+#define kAvatarW 16
+#define kAvatarH 24
+
+/* Palette. 0 is transparent. */
+enum {
+    kClear = 0,
+    kHair = 1,
+    kSkin = 2,
+    kEye = 3,
+    kShirt = 4,
+    kShirtDark = 5,
+    kTrousers = 6,
+    kShoes = 7
+};
+
+static const unsigned long kAvatarColour[] = {
+    0x000000UL, /* unused */
+    0x3A2A18UL, /* hair */
+    0xE0B088UL, /* skin */
+    0x202020UL, /* eye */
+    0x2E9FB0UL, /* shirt */
+    0x23798AUL, /* shirt shadow */
+    0x2B3D8CUL, /* trousers */
+    0x4A3A22UL  /* shoes */
+};
+
+/* Standing frame: hair, face, shirt with arms, trousers, shoes. */
+static const unsigned char kFrameStand[kAvatarH][kAvatarW] = {
+    {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,2,2,2,2,2,2,2,1,1,1,0,0},
+    {0,0,1,2,2,2,2,2,2,2,2,2,1,1,0,0},
+    {0,0,1,2,3,2,2,2,2,3,2,2,1,1,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,1,0,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,0,0,0,0},
+    {0,0,2,2,4,4,4,4,4,4,4,4,2,2,0,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,2,2,4,4,4,5,5,5,5,4,4,4,2,2,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,0,2,4,4,4,4,4,4,4,4,4,4,2,0,0},
+    {0,0,2,2,4,4,4,4,4,4,4,4,2,2,0,0},
+    {0,0,0,2,2,4,4,4,4,4,4,2,2,0,0,0},
+    {0,0,0,0,6,6,6,6,6,6,6,6,0,0,0,0},
+    {0,0,0,0,6,6,6,6,6,6,6,6,0,0,0,0},
+    {0,0,0,0,6,6,6,0,0,6,6,6,0,0,0,0},
+    {0,0,0,0,6,6,6,0,0,6,6,6,0,0,0,0},
+    {0,0,0,0,6,6,6,0,0,6,6,6,0,0,0,0},
+    {0,0,0,0,6,6,6,0,0,6,6,6,0,0,0,0},
+    {0,0,0,0,7,7,7,0,0,7,7,7,0,0,0,0},
+    {0,0,0,7,7,7,7,0,0,7,7,7,7,0,0,0}
+};
+
+/* Walk frame A: left leg forward, right leg back. */
+static const unsigned char kFrameWalkA[kAvatarH][kAvatarW] = {
+    {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,2,2,2,2,2,2,2,1,1,1,0,0},
+    {0,0,1,2,2,2,2,2,2,2,2,2,1,1,0,0},
+    {0,0,1,2,3,2,2,2,2,3,2,2,1,1,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,1,0,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,0,0,0,0},
+    {0,0,2,2,4,4,4,4,4,4,4,4,2,2,0,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,2,2,4,4,4,5,5,5,5,4,4,4,2,2,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,0,2,4,4,4,4,4,4,4,4,4,4,2,0,0},
+    {0,0,2,2,4,4,4,4,4,4,4,4,2,2,0,0},
+    {0,0,0,2,2,4,4,4,4,4,4,2,2,0,0,0},
+    {0,0,0,0,6,6,6,0,0,6,6,6,0,0,0,0},
+    {0,0,0,6,6,6,0,0,0,0,6,6,6,0,0,0},
+    {0,0,0,6,6,6,0,0,0,0,6,6,6,0,0,0},
+    {0,0,0,6,6,6,0,0,0,0,0,6,6,6,0,0},
+    {0,0,0,6,6,6,0,0,0,0,0,6,6,6,0,0},
+    {0,0,0,7,7,7,0,0,0,0,0,7,7,7,0,0},
+    {0,0,7,7,7,7,0,0,0,0,0,7,7,7,7,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
+/* Walk frame B: mirrored legs. */
+static const unsigned char kFrameWalkB[kAvatarH][kAvatarW] = {
+    {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,2,2,2,2,2,2,2,1,1,1,0,0},
+    {0,0,1,2,2,2,2,2,2,2,2,2,1,1,0,0},
+    {0,0,1,2,3,2,2,2,2,3,2,2,1,1,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,1,0,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,0,0,0,0},
+    {0,0,2,2,4,4,4,4,4,4,4,4,2,2,0,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,2,2,4,4,4,5,5,5,5,4,4,4,2,2,0},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,0,2,4,4,4,4,4,4,4,4,4,4,2,0,0},
+    {0,0,2,2,4,4,4,4,4,4,4,4,2,2,0,0},
+    {0,0,0,2,2,4,4,4,4,4,4,2,2,0,0,0},
+    {0,0,0,0,0,6,6,6,6,6,6,0,0,0,0,0},
+    {0,0,0,0,6,6,6,0,0,6,6,6,0,0,0,0},
+    {0,0,0,6,6,6,0,0,0,0,6,6,6,0,0,0},
+    {0,0,0,6,6,6,0,0,0,0,6,6,6,0,0,0},
+    {0,0,0,6,6,6,0,0,0,0,0,6,6,6,0,0},
+    {0,0,0,7,7,7,0,0,0,0,0,7,7,7,0,0},
+    {0,0,7,7,7,7,0,0,0,0,0,7,7,7,7,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
+/* Airborne: legs together and tucked, arms slightly out. */
+static const unsigned char kFrameAir[kAvatarH][kAvatarW] = {
+    {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,2,2,2,2,2,2,2,1,1,1,0,0},
+    {0,0,1,2,2,2,2,2,2,2,2,2,1,1,0,0},
+    {0,0,1,2,3,2,2,2,2,3,2,2,1,1,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,1,0,0,0},
+    {0,0,0,2,2,2,2,2,2,2,2,2,0,0,0,0},
+    {0,2,2,2,4,4,4,4,4,4,4,4,2,2,2,0},
+    {2,2,2,4,4,4,4,4,4,4,4,4,4,2,2,2},
+    {2,2,2,4,4,4,4,4,4,4,4,4,4,2,2,2},
+    {2,2,2,4,4,4,5,5,5,5,4,4,4,2,2,2},
+    {0,2,2,4,4,4,4,4,4,4,4,4,4,2,2,0},
+    {0,0,2,4,4,4,4,4,4,4,4,4,4,2,0,0},
+    {0,0,2,2,4,4,4,4,4,4,4,4,2,2,0,0},
+    {0,0,0,2,2,4,4,4,4,4,4,2,2,0,0,0},
+    {0,0,0,0,6,6,6,6,6,6,6,6,0,0,0,0},
+    {0,0,0,0,6,6,6,6,6,6,6,6,0,0,0,0},
+    {0,0,0,0,6,6,6,6,6,6,6,6,0,0,0,0},
+    {0,0,0,0,0,6,6,6,6,6,6,0,0,0,0,0},
+    {0,0,0,0,0,6,6,6,6,6,6,0,0,0,0,0},
+    {0,0,0,0,0,7,7,7,7,7,7,0,0,0,0,0},
+    {0,0,0,0,7,7,7,7,7,7,7,7,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
+/* Draw one frame with its feet at (footX, footY), each pixel scaled by `scale`,
+ * by filling contiguous runs of the same colour. */
+static void DrawFrame(const unsigned char frame[kAvatarH][kAvatarW], short footX, short footY,
+                      short scale)
+{
+    short row;
+
+    for (row = 0; row < kAvatarH; row++) {
+        short col = 0;
+
+        while (col < kAvatarW) {
+            unsigned char index = frame[row][col];
+
+            if (index == kClear) {
+                col++;
+                continue;
+            }
+
+            {
+                short run = 1;
+                Rect r;
+
+                while (col + run < kAvatarW && frame[row][col + run] == index) {
+                    run++;
+                }
+
+                r.left = (short)(footX + col * scale);
+                r.right = (short)(r.left + run * scale);
+                r.top = (short)(footY - (kAvatarH - row) * scale);
+                r.bottom = (short)(r.top + scale);
+                Sprite_FillRect(&r, kAvatarColour[index]);
+
+                col = (short)(col + run);
+            }
+        }
+    }
+}
+
 void Avatar_Draw(short px, short py, short pz, short camX, short camY,
                  const Rect *display, short phase, Boolean airborne)
 {
     short sx, sy;
-    short bob = 0;
-    Rect r;
 
     Iso_Project(px, py, pz, camX, camY, &sx, &sy);
     sx = (short)(sx + display->left);
     sy = (short)(sy + display->top);
 
-    /* Nothing to draw when the player is not in the play area. */
-    if (sx < (short)(display->left - 8) || sx > (short)(display->right + 8)) {
+    /* The figure is 24 px tall and the feet sit on the block's top face. */
+    if (sx < (short)(display->left - 12) || sx > (short)(display->right + 12)) {
         return;
     }
-    if (sy < (short)(display->top - 32) || sy > (short)(display->bottom + 8)) {
+    if (sy < (short)(display->top - 28) || sy > (short)(display->bottom + 8)) {
         return;
     }
 
-    /* The torso rises half a pixel per step on alternate phases, which at this
-     * size reads as a walk rather than as a slide. */
-    if (!airborne && phase >= 2 && phase <= 5) {
-        bob = 1;
-    }
+    /* Contact shadow, then the body. */
+    {
+        Rect shadow;
 
-    SetRect(&r, (short)(sx - 5), sy, (short)(sx + 6), (short)(sy + 3));
-    Sprite_FillRect(&r, 0x1E3E1EUL);          /* contact shadow */
+        SetRect(&shadow, (short)(sx - 6), sy, (short)(sx + 7), (short)(sy + 3));
+        Sprite_FillRect(&shadow, 0x1E3E1EUL);
+    }
 
     if (airborne) {
-        /* Legs together and tucked: the silhouette says "off the ground". */
-        SetRect(&r, (short)(sx - 3), (short)(sy - 8 - bob), (short)(sx + 4), (short)(sy - 2));
-        Sprite_FillRect(&r, 0x2B3D8CUL);
+        DrawFrame(kFrameAir, (short)(sx - kAvatarW / 2), sy, 1);
+    }
+    else if (phase == 2 || phase == 3 || phase == 6 || phase == 7) {
+        DrawFrame(kFrameWalkA, (short)(sx - kAvatarW / 2), sy, 1);
+    }
+    else if (phase == 1 || phase == 4 || phase == 5) {
+        DrawFrame(kFrameWalkB, (short)(sx - kAvatarW / 2), sy, 1);
     }
     else {
-        /* Two legs, one forward and one back, alternating with the phase. */
-        short swing = (short)((phase <= 3) ? phase : 8 - phase);
-
-        SetRect(&r, (short)(sx - 4), (short)(sy - 10 - bob), (short)(sx - 1), (short)(sy - swing / 2));
-        Sprite_FillRect(&r, 0x24337AUL);
-        SetRect(&r, (short)(sx + 1), (short)(sy - 10 - bob), (short)(sx + 4), (short)(sy - (4 - swing) / 2));
-        Sprite_FillRect(&r, 0x2B3D8CUL);
+        DrawFrame(kFrameStand, (short)(sx - kAvatarW / 2), sy, 1);
     }
-
-    SetRect(&r, (short)(sx - 4), (short)(sy - 20 - bob), (short)(sx + 5), (short)(sy - 10 - bob));
-    Sprite_FillRect(&r, 0x3D5BD6UL);          /* torso */
-    SetRect(&r, (short)(sx - 3), (short)(sy - 27 - bob), (short)(sx + 4), (short)(sy - 20 - bob));
-    Sprite_FillRect(&r, 0xE0B088UL);          /* head */
 }

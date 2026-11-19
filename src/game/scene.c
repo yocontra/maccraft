@@ -51,8 +51,8 @@ enum {
  * left empty so the island reads against the sky. */
 #define kIslandCX 24
 #define kIslandCY 24
-#define kIslandRX 20
-#define kIslandRY 17
+#define kIslandRX 22
+#define kIslandRY 19
 #define kIslandRX2 (kIslandRX * kIslandRX)
 #define kIslandRY2 (kIslandRY * kIslandRY)
 
@@ -61,8 +61,8 @@ enum {
 #define kPlateauCY 23
 
 /* Stone massif on the east side. */
-#define kRidgeCX 35
-#define kRidgeCY 19
+#define kRidgeCX 36
+#define kRidgeCY 20
 
 /* Hut footprint on the plateau, one cell of overhang on every roof side. */
 #define kHutX0 23
@@ -84,6 +84,8 @@ static int AbsInt(int v)
 {
     return v < 0 ? -v : v;
 }
+
+Boolean Scene_IsIslandCell(short x, short y);
 
 static Boolean IsIsland(short x, short y)
 {
@@ -390,6 +392,61 @@ static void BuildRidge(void)
     }
 }
 
+/* A grassy hill in the south-west with a cave mouth cut into its western face.
+ *
+ * A flat island gives the isometric camera nothing to read: no silhouette, no
+ * occlusion, no sense of height. The hill is a cone of integer height with grass
+ * on its cap and dirt under it, and the cave is a two-block opening so the
+ * player can see into it without the world needing a lighting pass. */
+#define kHillCX 30
+#define kHillCY 33
+#define kHillR 5
+
+static void BuildHill(void)
+{
+    short x, y, z;
+
+    for (y = (short)(kHillCY - kHillR); y <= (short)(kHillCY + kHillR); y++) {
+        for (x = (short)(kHillCX - kHillR); x <= (short)(kHillCX + kHillR); x++) {
+            int dx = (int)x - kHillCX;
+            int dy = (int)y - kHillCY;
+            int d2 = dx * dx + dy * dy;
+            short height;
+
+            /* Land only, and inland: the sea is exactly one block deep and every
+             * land cell that touches water must carry a beach shelf, so the hill
+             * has to keep a ring of sand between itself and the coast. */
+            if (!IsIsland(x, y) || InPlateau(x, y) ||
+                World_Get(x, y, kSeaLevel) == kBlockWater ||
+                World_Get((short)(x + 1), y, kSeaLevel) == kBlockWater ||
+                World_Get((short)(x - 1), y, kSeaLevel) == kBlockWater ||
+                World_Get(x, (short)(y + 1), kSeaLevel) == kBlockWater ||
+                World_Get(x, (short)(y - 1), kSeaLevel) == kBlockWater) {
+                continue;
+            }
+            /* Cone: full height at the centre, one level per ring going out. */
+            height = (short)(kSeaLevel + 1 + (kHillR * kHillR - d2) / (kHillR * 2));
+            if (height <= kSeaLevel + 1) {
+                continue;
+            }
+            if (height > kWorldZ - 2) {
+                height = kWorldZ - 2;
+            }
+            for (z = (short)(kSeaLevel + 1); z <= height; z++) {
+                World_Set(x, y, z, (z == height) ? kBlockGrass : kBlockDirt);
+            }
+        }
+    }
+
+    /* Cave mouth: two blocks high, two deep, on the western side of the hill. */
+    for (z = (short)(kSeaLevel + 2); z <= (short)(kSeaLevel + 3); z++) {
+        World_Set((short)(kHillCX - 3), (short)(kHillCY - 1), z, kBlockEmpty);
+        World_Set((short)(kHillCX - 3), kHillCY, z, kBlockEmpty);
+        World_Set((short)(kHillCX - 2), (short)(kHillCY - 1), z, kBlockEmpty);
+        World_Set((short)(kHillCX - 2), kHillCY, z, kBlockEmpty);
+    }
+}
+
 /* A four-by-three plank hut with log corner posts, a glass window, a
  * doorway facing the camera, a plank roof with a ridge beam, and a brick
  * chimney poking through the roof. */
@@ -451,6 +508,11 @@ static void MirrorOffset(short variant, int *dx, int *dy)
         *dx = -*dx;
     if (variant & 2)
         *dy = -*dy;
+}
+
+Boolean Scene_IsIslandCell(short x, short y)
+{
+    return IsIsland(x, y);
 }
 
 static void PutLeaf(short x, short y, short z)
@@ -528,8 +590,11 @@ void Scene_BuildIsland(void)
     EdgeGrassWithDirt();
     BuildRidge();
     BuildHut();
+    BuildHill();
 
     PlantTree(17, 22, 0);
     PlantTree(24, 30, 3);
     PlantTree(29, 28, 1);
+    PlantTree(15, 27, 2);
+    PlantTree(31, 33, 0);
 }
