@@ -675,40 +675,35 @@ static void CentreOnPlayer(void)
     short px = (short)(sPlayer.x >> 16);
     short py = (short)(sPlayer.y >> 16);
     short pz = (short)(sPlayer.z >> 16);
-    short targetX = (short)((sDisplayRect.right - sDisplayRect.left) / 2);
-    short targetY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2);
+    short sx = 0;
+    short sy = 0;
+    short marginX = 64;
+    short marginY = 48;
+
+    Iso_Project(px, py, pz, sCamX, sCamY, &sx, &sy);
+    sx = (short)(sx + sDisplayRect.left);
+    sy = (short)(sy + sDisplayRect.top);
+
+    /* The camera does not track the player. Tracking meant a pan every step, and
+     * a pan cannot be cheaper than moving every pixel of the screen: 61 ticks a
+     * frame in the emulator, a second per step, which is what made walking
+     * unusable. The view holds most of the island, so it stays put and only
+     * re-centres when the player is about to walk out of it -- one full frame
+     * every few dozen steps instead of one per step. */
+    if (sx > (short)(sDisplayRect.left + marginX) &&
+        sx < (short)(sDisplayRect.right - marginX) &&
+        sy > (short)(sDisplayRect.top + marginY) &&
+        sy < (short)(sDisplayRect.bottom - marginY)) {
+        return;
+    }
 
     {
-        short wantX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
-        short wantY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
-        short dx = (short)(wantX - sCamX);
-        short dy = (short)(wantY - sCamY);
+        short targetX = (short)((sDisplayRect.right - sDisplayRect.left) / 2);
+        short targetY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2 + kTileH);
 
-        /* Dead zone: follow only when the player nears the edge of the view.
-         * Panning on every step repainted the whole play area for a one-pixel
-         * shift, which is what made walking crawl; inside the dead zone a step
-         * moves nothing but the figure. */
-        {
-            short marginX = (short)((sDisplayRect.right - sDisplayRect.left) / 5);
-            short marginY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 5);
-
-            if (dx > -marginX && dx < marginX && dy > -marginY && dy < marginY) {
-                return;
-            }
-        }
-
-        /* Follow at half speed, with a floor of one pixel so the camera always
-         * converges: snapping the camera to the player each tick made every step
-         * a jump-cut, and the scroll optimisation turns this into a smooth pan
-         * for almost nothing. */
-        if (dx > 1 || dx < -1) {
-            dx = (short)(dx / 2);
-        }
-        if (dy > 1 || dy < -1) {
-            dy = (short)(dy / 2);
-        }
-        sCamX = (short)(sCamX + dx);
-        sCamY = (short)(sCamY + dy);
+        sCamX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
+        sCamY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+        MarkDirty(&sDisplayRect);
     }
 }
 
@@ -1584,10 +1579,17 @@ void GameWindow_WalkForTest(short dx, short dy, short ticks)
     short i;
 
     for (i = 0; i < ticks; i++) {
+        Rect figure;
+
+        /* Same damage the idle loop produces: the figure where it is and where
+         * it lands, nothing else. */
+        PlayerFigureRect(&figure);
+        MarkDirty(&figure);
         Player_Step(&sPlayer, dx, dy, false);
+        PlayerFigureRect(&figure);
+        MarkDirty(&figure);
     }
     CentreOnPlayer();
-    MarkDirty(&sDisplayRect);
     FlushDirty();
 }
 
