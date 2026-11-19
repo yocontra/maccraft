@@ -348,6 +348,7 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
     short xMin, yMin, xMax, yMax, sum, x, y, sumMax, z, top;
 
     ComputeVisibleRange(v, clip, &xMin, &yMin, &xMax, &yMax);
+
     sumMax = (short)(xMax + yMax);
 
     /* Painter order: far columns first, bottom to top within a column. Walking a

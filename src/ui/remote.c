@@ -69,7 +69,7 @@ extern long Sprite_PaintedPixels;
 
 void Remote_ReportStats(long paintTicks, long paints, long steps)
 {
-    char line[80];
+    char line[64];
     short i = 0;
     long values[4];
     short v;
@@ -87,36 +87,22 @@ void Remote_ReportStats(long paintTicks, long paints, long steps)
         if (value == 0) {
             digits[n++] = '0';
         }
-        while (value > 0) {
+        while (value > 0 && n < 11) {
             digits[n++] = (char)('0' + (value % 10));
             value /= 10;
         }
         while (n > 0 && i < (short)sizeof(line) - 2) {
             line[i++] = digits[--n];
         }
-        line[i++] = (v == 3) ? '\n' : ' ';
+        if (i < (short)sizeof(line) - 2) {
+            line[i++] = ' ';
+        }
     }
+    line[i] = '\0';
 
-    sResult[0] = '\0';
-    {
-        short vRef = ShareVolume();
-        FSSpec ack;
-        short ackRef;
-
-        if (vRef == 0 || FSMakeFSSpec(vRef, 0, kAckName, &ack) != noErr) {
-            return;
-        }
-        if (FSpOpenDF(&ack, fsRdWrPerm, &ackRef) != noErr) {
-            return;
-        }
-        {
-            long wrote = i;
-
-            SetEOF(ackRef, 0);
-            FSWrite(ackRef, &wrote, line);
-        }
-        FSClose(ackRef);
-    }
+    /* The receipt is written by Remote_Ack; writing the file here as well would
+     * just be overwritten by it. */
+    Remote_SetResult(line);
 }
 
 void Remote_Ack(const char *cmd)

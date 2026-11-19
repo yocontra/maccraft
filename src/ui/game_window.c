@@ -72,6 +72,12 @@ long Sprite_Work[6];
  * divided by Sprite_Work[3], and it is what tells a small hover box from a full
  * frame without guessing. */
 long Sprite_PaintedPixels;
+/* Last painted rectangle: width and height, for the harness receipt. */
+
+
+
+
+
 static unsigned long sLastSaveTick = 0;
 static short sWalkPhase = 0;
 
@@ -350,6 +356,9 @@ static void FlushDirty(void)
 
     r = sDirtyRect;
     sDirty = false;
+
+
+
     {
         GrafPtr saved;
 
@@ -1017,6 +1026,7 @@ static void GameWindow_Render(void)
 {
     Rect strip;
     PenState savedPen;
+    Boolean fullPaint = false;
 
     if (!sInitialized || sWindow == NULL) {
         return;
@@ -1060,16 +1070,16 @@ static void GameWindow_Render(void)
         sRenderRect = sDisplayRect;
     }
     else {
-        RgnHandle clip = NewRgn();
+        /* The update region lives in the window's visRgn; GetClip returns the
+         * port's clip, which is the whole port and says nothing about what this
+         * paint is for. Reading the clip made every paint look like a full
+         * window, so every pointer move repainted the world from the sky. */
+        if (sWindow->visRgn != NULL) {
+            Rect box = (*sWindow->visRgn)->rgnBBox;
 
-        if (clip != NULL) {
-            Rect box;
 
-            GetClip(clip);
-            box = (*clip)->rgnBBox;
-            DisposeRgn(clip);
             if (!SectRect(&box, &sDisplayRect, &sRenderRect)) {
-                sRenderRect = sDisplayRect;
+                SetRect(&sRenderRect, 0, 0, 0, 0);
             }
         }
         else {
@@ -1077,9 +1087,20 @@ static void GameWindow_Render(void)
         }
     }
 
-    /* White window background and content frame */
-    BackPat(&qd.white);
-    DrawStandardFrame(sWindow);
+    /* Only a full repaint clears anything. A partial one -- the pointer moving
+     * between tiles is the common case -- must draw over what is already there:
+     * whitening the frame and filling sky first is what produced the pale square
+     * around the selection box while the blocks were being drawn, and it left a
+     * white square behind whenever the world pass drew no tiles for that rect. */
+    fullPaint = (Boolean)(sRenderRect.left == sDisplayRect.left &&
+                          sRenderRect.right == sDisplayRect.right &&
+                          sRenderRect.top == sDisplayRect.top &&
+                          sRenderRect.bottom == sDisplayRect.bottom);
+
+    if (fullPaint) {
+        BackPat(&qd.white);
+        DrawStandardFrame(sWindow);
+    }
 
     /* Play area background. Not black: with a colour port QuickDraw fills from
      * the pen pattern, so a dark background plus dark fills made the entire
@@ -1142,19 +1163,24 @@ static void GameWindow_Render(void)
         (long)(sRenderRect.bottom - sRenderRect.top);
 
     if (sHasColor && Sprite_Ready()) {
-        /* Minecraft's sky: one flat blue with flat white clouds, painted through
-         * the pixel path so the colours are exactly what is asked for. Scoped to
-         * the repaint rect: these writes bypass the update clip, so filling the
-         * whole display here would erase the island on every partial
-         * invalidation (a block placement, a hover move). */
-        Sprite_BeginFrame();
-        Sprite_SetView(&sRenderRect);
-        Sprite_FillRect(&sRenderRect, 0x78A7FFUL);
-        DrawClouds();
-        Sprite_SetView(&sDisplayRect);
-        Sprite_EndFrame();
+        /* The sky is only rewritten when the view itself changed. A pointer move
+         * repaints two small boxes over terrain that has not moved, so filling
+         * sky under them only flashes blue before the tiles land. */
+        if (fullPaint || sCamX != sLastCamX || sCamY != sLastCamY) {
+            /* Minecraft's sky: one flat blue with flat white clouds, painted
+             * through the pixel path so the colours are exactly what is asked
+             * for. Scoped to the repaint rect: these writes bypass the update
+             * clip, so filling the whole display here would erase the island on
+             * every partial invalidation (a block placement, a hover move). */
+            Sprite_BeginFrame();
+            Sprite_SetView(&sRenderRect);
+            Sprite_FillRect(&sRenderRect, 0x78A7FFUL);
+            DrawClouds();
+            Sprite_SetView(&sDisplayRect);
+            Sprite_EndFrame();
+        }
     }
-    else {
+    else if (fullPaint) {
         /* One-bit screen: Sky_Draw's dither ramp is the better picture. */
         Sky_Draw(sWindow, sDisplayRect, sHasColor, (long)TickCount());
     }
@@ -1204,42 +1230,45 @@ static void GameWindow_Render(void)
         Sprite_EndFrame();
     }
 
-    /* Erase the margins so a partially visible edge tile cannot bleed outside
-     * the display rect (no manual clipping anywhere). */
-    BackColor(whiteColor);
-    BackPat(&qd.white);
+    if (fullPaint) {
+        /* Erase the margins so a partially visible edge tile cannot bleed outside
+         * the display rect (no manual clipping anywhere). Only on a full repaint;
+         * on a partial one the margins were not damaged. */
+        BackColor(whiteColor);
+        BackPat(&qd.white);
 
-    /* Top strip */
-    strip = sWindow->portRect;
-    strip.bottom = sDisplayRect.top;
-    EraseRect(&strip);
+        /* Top strip */
+        strip = sWindow->portRect;
+        strip.bottom = sDisplayRect.top;
+        EraseRect(&strip);
 
-    /* Left strip */
-    strip = sWindow->portRect;
-    strip.top    = sDisplayRect.top;
-    strip.bottom = sDisplayRect.bottom;
-    strip.right  = sDisplayRect.left;
-    EraseRect(&strip);
+        /* Left strip */
+        strip = sWindow->portRect;
+        strip.top    = sDisplayRect.top;
+        strip.bottom = sDisplayRect.bottom;
+        strip.right  = sDisplayRect.left;
+        EraseRect(&strip);
 
-    /* Right strip */
-    strip = sWindow->portRect;
-    strip.top    = sDisplayRect.top;
-    strip.bottom = sDisplayRect.bottom;
-    strip.left   = sDisplayRect.right;
-    EraseRect(&strip);
+        /* Right strip */
+        strip = sWindow->portRect;
+        strip.top    = sDisplayRect.top;
+        strip.bottom = sDisplayRect.bottom;
+        strip.left   = sDisplayRect.right;
+        EraseRect(&strip);
 
-    /* Bottom strip: the gap between the display and the selector (the
-     * selector repaints its own area afterwards). */
-    strip = sWindow->portRect;
-    strip.top = sDisplayRect.bottom;
-    EraseRect(&strip);
+        /* Bottom strip: the gap between the display and the selector (the
+         * selector repaints its own area afterwards). */
+        strip = sWindow->portRect;
+        strip.top = sDisplayRect.bottom;
+        EraseRect(&strip);
 
-    /* Display frame, then the chrome. The HUD draws through the pixel path, so
-     * it needs the screen locked and its view narrowed to the rect it owns. */
-    PenNormal();
-    PenSize(1, 1);
-    ForeColor(blackColor);
-    FrameRect(&sDisplayRect);
+        /* Display frame, then the chrome. The HUD draws through the pixel path, so
+         * it needs the screen locked and its view narrowed to the rect it owns. */
+        PenNormal();
+        PenSize(1, 1);
+        ForeColor(blackColor);
+        FrameRect(&sDisplayRect);
+    }
 
     Sprite_BeginFrame();
     Sprite_SetView(&sTitleStripRect);
