@@ -33,12 +33,17 @@ enum {
     /* Minecraft's sky is a single mid blue that only pales near the horizon.
      * The original top level (1,3,7) is a deep navy that quantises to black on a
      * 256-colour display, so the top of the sky read as a black band. */
-    kSkyTopRed = 4,
-    kSkyTopGreen = 7,
-    kSkyTopBlue = 12,
-    kSkyHorizonRed = 13,
-    kSkyHorizonGreen = 12,
-    kSkyHorizonBlue = 12
+    /* Minecraft's sky is one colour with clouds on it. A gradient cannot be
+     * drawn without cliffs here either: any red/green step quantises to a hard
+     * band on a 256-colour display, and the first version of this ramp turned
+     * into a blue-to-white cliff half way down the window. So zenith and
+     * horizon are the same sky blue and the bands are invisible. */
+    kSkyTopRed = 6,
+    kSkyTopGreen = 9,
+    kSkyTopBlue = 14,
+    kSkyHorizonRed = 6,
+    kSkyHorizonGreen = 9,
+    kSkyHorizonBlue = 14
 };
 
 /* Bands in Sky_Draw.  Ten bands over a ~590 pixel view meant ~59 pixels of
