@@ -1510,16 +1510,6 @@ static void GameWindow_Render(void)
          * whenever the play area is anywhere in the clip. */
         Sprite_BeginFrame();
         HUD_DrawCrosshair();
-        {
-            Rect probe;
-
-            /* PROBE: is a 6x6 black square drawn at the display centre? */
-            SetRect(&probe, (short)((sDisplayRect.left + sDisplayRect.right) / 2 - 3),
-                    (short)((sDisplayRect.top + sDisplayRect.bottom) / 2 - 3),
-                    (short)((sDisplayRect.left + sDisplayRect.right) / 2 + 3),
-                    (short)((sDisplayRect.top + sDisplayRect.bottom) / 2 + 3));
-            Sprite_FillRect(&probe, 0x000000UL);
-        }
         if (sHoverValid) {
             DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
         }
