@@ -34,6 +34,7 @@ short GameWindow_PlayerTileX(void);
 short GameWindow_PlayerRespawns(void);
 short GameWindow_PlayerJumpPeakForTest(void);
 void GameWindow_WalkForTest(short dx, short dy, short ticks);
+void GameWindow_MineForTest(short x, short y, short z, short ticks);
 void GameWindow_JumpForTest(void);
 
 /* Harness hook: repaint `iterations` times, return elapsed ticks. */

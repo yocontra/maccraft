@@ -247,8 +247,12 @@ void SelfTest_Run(void)
     LogLine("cam_y=", NULL, camY, true);
     LogLine("block_type=", NULL, blockType, true);
 
+    {
+        short topZBefore = 0;
+
     /* The plateau is two blocks high at 24,24; the display is centred on it. */
     topZ = World_TopZ(24, 24);
+    topZBefore = topZ;
     LogLine("topz_before=", NULL, topZ, true);
 
     /* Place a block through the same handler a click runs. The click point is
@@ -260,9 +264,13 @@ void SelfTest_Run(void)
             (long)GameWindow_ClickForTest(centreX, centreY, false), true);
     Pump(20);
 
-    /* Remove it again with a shift-click on the same point. */
-    LogLine("click_removed=", NULL,
+    /* Remove it again: a shift-click starts mining now, so the break is driven
+     * to completion through the same path the button-hold uses. */
+    LogLine("click_started_mine=", NULL,
             (long)GameWindow_ClickForTest(centreX, centreY, true), true);
+    GameWindow_MineForTest(24, 24, 0, 60);
+    LogLine("click_removed=", NULL, (long)(World_TopZ(24, 24) < topZBefore), true);
+    }
     Pump(20);
     LogLine("topz_after=", NULL, World_TopZ(24, 24), true);
 

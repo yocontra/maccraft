@@ -167,3 +167,15 @@ block deep, and every land cell that touches water carries a sand or gravel shel
 coast geometry to check containment, and that copy went stale the moment the
 island was resized -- the test failed for a scene that was correct. One owner for
 the coast is the fix.
+
+## Mining
+
+Shift-click used to delete a block outright. It now starts mining: the tile is
+recorded, the idle loop advances the break while the mouse button stays down, a
+scatter of dark pixels grows over the block as it is damaged, and the block comes
+away at twenty ticks. Releasing early cancels and clears the damage.
+
+Proven through the same path the mouse uses -- `click_started_mine=1` from a
+shift-click, then the break driven to completion by the harness hook, which is
+what `click_removed=1` reports. The harness cannot hold a mouse button, so the
+hook exists for exactly that reason.

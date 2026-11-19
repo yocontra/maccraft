@@ -67,6 +67,17 @@ static unsigned long sLastPhysicsTick = 0;
 static Boolean sWorldDirty = false;
 static unsigned long sLastSaveTick = 0;
 static short sWalkPhase = 0;
+
+/* Hold-to-break: shift-click starts mining the tile under the cursor, the idle
+ * loop advances it while the button is still down, and the block comes away when
+ * it is finished. A single click used to delete a block outright, which is not
+ * what a Minecraft-like should feel like. */
+static Boolean sBreaking = false;
+static short sBreakX = 0;
+static short sBreakY = 0;
+static short sBreakZ = 0;
+static short sBreakTicks = 0;
+#define kBreakTicksNeeded 20
 static Boolean sWasOnGround = true;
 static short sLastPlayerTileX = -1;
 static short sLastPlayerTileY = -1;
@@ -413,6 +424,70 @@ static void ApplyRemoteCommand(const char *cmd)
     }
 }
 
+static void InvalidateColumn(short x, short y, short z);
+
+/* Take the block away and tell the world it changed. */
+static void FinishBreak(void)
+{
+    if (!sBreaking) {
+        return;
+    }
+    if (World_Set(sBreakX, sBreakY, sBreakZ, 0)) {
+        Sfx_Play(kSfxBreak);
+        sWorldDirty = true;
+    }
+    sBreaking = false;
+    sBreakTicks = 0;
+    InvalidateColumn(sBreakX, sBreakY, sBreakZ);
+}
+
+/* Harness hook: mine a block to completion through the same path the mouse
+ * uses. The keyboard and mouse cannot be driven from the host, so this is how
+ * hold-to-break gets proven. */
+void GameWindow_MineForTest(short x, short y, short z, short ticks)
+{
+    if (World_TopZ(x, y) < 0) {
+        return;
+    }
+    sBreaking = true;
+    sBreakX = x;
+    sBreakY = y;
+    sBreakZ = World_TopZ(x, y);
+    sBreakTicks = (short)(ticks > 0 ? ticks : 0);
+    if (sBreakTicks >= kBreakTicksNeeded) {
+        FinishBreak();
+    }
+    FlushDirty();
+}
+
+/* The crack overlay: dark pixels over the tile being mined, more of them the
+ * longer the button is held. Drawn as small fills because the sprite layer has no
+ * alpha; at this size a sparse scatter reads as damage. */
+static void DrawCrackOverlay(short x, short y, short z, short ticks)
+{
+    short sx, sy;
+    short step = (short)((ticks * 8) / kBreakTicksNeeded);
+    short i;
+    static const signed char kSpots[8][2] = {
+        {-4, -2}, {3, -4}, {-8, 2}, {7, 3}, {-2, 6}, {5, -1}, {-6, -5}, {1, 2}
+    };
+
+    Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
+    sx = (short)(sx + sDisplayRect.left);
+    sy = (short)(sy + sDisplayRect.top);
+
+    if (step > 8) {
+        step = 8;
+    }
+    for (i = 0; i < step; i++) {
+        Rect r;
+
+        SetRect(&r, (short)(sx + kSpots[i][0]), (short)(sy + kSpots[i][1]),
+                (short)(sx + kSpots[i][0] + 3), (short)(sy + kSpots[i][1] + 2));
+        Sprite_FillRect(&r, 0x101010UL);
+    }
+}
+
 /* The rectangle the held block occupies, so the swing can repaint just that
  * instead of the whole display. */
 static void HeldBlockRect(Rect *out)
@@ -702,11 +777,14 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
         topZ = World_TopZ(x, y);
 
         if (shiftDown) {
-            /* Remove the top block of the column */
-            if (topZ >= 0 && World_Set(x, y, topZ, 0)) {
-                Sfx_Play(kSfxBreak);
-                sWorldDirty = true;
-                InvalidateColumn(x, y, topZ);
+            /* Start mining: the block comes away after the button has been held
+             * long enough, see the idle loop. */
+            if (topZ >= 0) {
+                sBreaking = true;
+                sBreakX = x;
+                sBreakY = y;
+                sBreakZ = topZ;
+                sBreakTicks = 0;
             }
         }
         else {
@@ -1001,6 +1079,9 @@ static void GameWindow_Render(void)
          * click will act. */
         if (sHoverValid) {
             DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+        }
+        if (sBreaking && sBreakTicks > 0) {
+            DrawCrackOverlay(sBreakX, sBreakY, sBreakZ, sBreakTicks);
         }
         Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
                     (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
@@ -1484,6 +1565,31 @@ void GameWindow_Idle(void)
             sIntentX = 0;
             sIntentY = 0;
             sJumpHeld = false;
+        }
+    }
+
+    /* Mining: advance while the button stays down on the same tile, cancel the
+     * moment it is released. The crack overlay is repainted as it grows. */
+    if (sBreaking) {
+        if (Button()) {
+            sBreakTicks++;
+            if (sBreakTicks >= kBreakTicksNeeded) {
+                FinishBreak();
+            }
+            else {
+                Rect crackRect;
+
+                SelectionBoxRect(sBreakX, sBreakY, sBreakZ, &crackRect);
+                MarkDirty(&crackRect);
+            }
+        }
+        else {
+            Rect crackRect;
+
+            SelectionBoxRect(sBreakX, sBreakY, sBreakZ, &crackRect);
+            MarkDirty(&crackRect);
+            sBreaking = false;
+            sBreakTicks = 0;
         }
     }
 
