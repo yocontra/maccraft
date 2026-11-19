@@ -83,3 +83,20 @@ the loop that is already one load, one table lookup and one store per pixel.
   (`sfx_lasterr=0`), which required one fix in the harness itself: the generated
   prefs set `nosound true`, so the guest had no audio hardware and the Sound
   Manager answered everything with `noHardwareErr` (-200).
+
+## Sky and clouds are painted, not filled
+
+In the play area QuickDraw fills did not land reliably on this port, so the sky
+and its clouds are drawn through the pixel path as well: one flat `0x78A7FF`
+fill (Minecraft's sky), then the cloud slabs from `sky.c`'s layout, white with a
+`0xC8C8D8` underside one pixel high. `Sky_CloudRectCount`, `Sky_CloudRect` and
+`Sky_CloudPeriod` are exported from `sky.h` so the colour renderer and the
+one-bit `Sky_Draw` dither path place clouds in the same spots. A 1-bit screen
+still uses `Sky_Draw` for the whole backdrop, because dithering is the better
+picture there.
+
+## Contact shading
+
+A side face is no longer one flat shade: the bake darkens it in three steps from
+top to bottom (`RowShade`), which reads as Minecraft's smooth lighting where a
+face meets the ground. Side faces stop looking like they float.

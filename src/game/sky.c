@@ -165,6 +165,11 @@ typedef struct {
 
 /* Declared here rather than in sky.h: the header stays the drawing contract,
  * while the host test needs the flat layout to verify the tiling. */
+short Sky_CloudPeriod(void)
+{
+    return kSkyCloudPeriod;
+}
+
 short Sky_CloudRectCount(void);
 void Sky_CloudRect(short index, short *x, short *y, short *width,
                    short *height, short *undersideY);
@@ -313,6 +318,13 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
             continue;
 
         if (hasColor) {
+            /* On a colour display the caller has already filled the sky with the
+             * exact blue (the sprite layer draws it, because QuickDraw fills in
+             * the play area did not land reliably on this port); the bands are
+             * skipped and only the clouds below are drawn. */
+            break;
+        }
+        if (0) {
             Sky_BandColor(i, kSkyBands, &red, &green, &blue);
             color.red = red;
             color.green = green;

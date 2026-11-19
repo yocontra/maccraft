@@ -196,7 +196,30 @@ static void BuildShadeMap(void)
     }
 }
 
-static void PutBand(short band, short width, short height, short shade)
+/* Minecraft's smooth lighting darkens a side face towards the ground it meets.
+ * The palette only has four ramp steps, so the ramp is quantised: the top third
+ * of a side keeps the face's shade, the middle goes one step darker and the
+ * bottom one step darker again. That reads as a contact shadow and stops blocks
+ * looking like they float. Tops stay uniform, as the light hits them square on. */
+static short RowShade(short face, short row, short height, short shade)
+{
+    short extra;
+
+    if (face == 0 || height <= 0) {
+        return shade;
+    }
+    extra = (short)((row * 3) / height);
+    if (extra > 2) {
+        extra = 2;
+    }
+    shade = (short)(shade + extra);
+    if (shade >= kSpriteShades) {
+        shade = kSpriteShades - 1;
+    }
+    return shade;
+}
+
+static void PutBand(short band, short width, short height, short shade, short face)
 {
     short row, col;
     Ptr colourBase = (Ptr)sSheet + (long)band * kSpriteH * kSpriteW;
@@ -260,7 +283,7 @@ Boolean Sprite_Init(void)
             Bake_Face(Art_Texture((BlockID)id, face), face, sPixels, sPixelMask);
             for (shade = 0; shade < kSpriteShades; shade++) {
                 PutBand(BandOf((BlockID)id, face, shade), Bake_FaceWidth(face),
-                        Bake_FaceHeight(face), shade);
+                        Bake_FaceHeight(face), shade, face);
             }
         }
     }

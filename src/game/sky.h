@@ -48,6 +48,16 @@ short Sky_BandDensity(short band, short bandCount);
 /* Horizontal cloud drift in pixels, 0..kSkyCloudPeriod-1. */
 short Sky_CloudShift(long ticks);
 
+/* The cloud layout. Exposed so a colour renderer can place the slabs itself:
+ * each rectangle is x pixels from the start of the tiled period, y pixels below
+ * the top of the sky, and has a shaded underside one pixel below its body. */
+short Sky_CloudRectCount(void);
+void Sky_CloudRect(short index, short *x, short *y, short *width,
+                   short *height, short *undersideY);
+
+/* Width of one tiled cloud period, in pixels. */
+short Sky_CloudPeriod(void);
+
 /*
  * Sky_Draw needs QuickDraw: GrafPtr, Rect and Pattern do not exist in the
  * host tests' minimal <Types.h> shim.  The shim marks itself with

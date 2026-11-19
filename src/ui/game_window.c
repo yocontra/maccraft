@@ -428,6 +428,41 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     KillPoly(poly);
 }
 
+/* The cloud slabs, drawn through the pixel path: QuickDraw fills inside the
+ * play area do not land on this port, and the sky is painted by the sprite
+ * layer for exactly that reason. Positions come from sky.c, which owns the
+ * layout, so the mono path and this one agree on where clouds are. */
+static void DrawClouds(void)
+{
+    short rectCount = Sky_CloudRectCount();
+    short shift = Sky_CloudShift((long)TickCount());
+    short i;
+    short cx, cy, cw, ch, uy;
+    long x;
+
+    for (x = (long)sDisplayRect.left - Sky_CloudPeriod(); x < (long)sDisplayRect.right;
+         x += Sky_CloudPeriod()) {
+        for (i = 0; i < rectCount; i++) {
+            Rect slab;
+
+            Sky_CloudRect(i, &cx, &cy, &cw, &ch, &uy);
+            slab.left = (short)(x + cx + shift);
+            slab.right = (short)(slab.left + cw);
+            slab.top = (short)(sDisplayRect.top + uy);
+            slab.bottom = (short)(slab.top + 1);
+
+            if (slab.right <= sDisplayRect.left || slab.left >= sDisplayRect.right) {
+                continue;
+            }
+            Sprite_FillRect(&slab, 0xC8C8D8UL); /* shaded underside */
+
+            slab.top = (short)(sDisplayRect.top + cy);
+            slab.bottom = (short)(slab.top + ch);
+            Sprite_FillRect(&slab, 0xFFFFFFUL);
+        }
+    }
+}
+
 /* Minecraft's crosshair: a small white plus with a dark backing so it reads on
  * both sky and grass. Drawn with QuickDraw after the world pass. */
 static void DrawCrosshair(void)
@@ -1168,7 +1203,18 @@ static void GameWindow_Render(void)
      * view a black rectangle. White pattern + RGB background colour gives a
      * solid tint on colour displays and white on 1-bit ones. */
     DetectColor();
-    Sky_Draw(sWindow, sDisplayRect, sHasColor, (long)TickCount());
+    if (sHasColor && Sprite_Ready()) {
+        /* Minecraft's sky: one flat blue with flat white clouds, painted through
+         * the pixel path so the colours are exactly what is asked for. */
+        Sprite_BeginFrame();
+        Sprite_FillRect(&sDisplayRect, 0x78A7FFUL);
+        DrawClouds();
+        Sprite_EndFrame();
+    }
+    else {
+        /* One-bit screen: Sky_Draw's dither ramp is the better picture. */
+        Sky_Draw(sWindow, sDisplayRect, sHasColor, (long)TickCount());
+    }
 
     /* World blocks (nothing to do when only the selector strip was dirty) */
 
