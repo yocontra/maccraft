@@ -16,6 +16,7 @@
 #include "../game/light.h"
 #include "../game/pick.h"
 #include "../game/player.h"
+#include "../game/save.h"
 #include "../sound/sfx.h"
 #include "../game/texture.h"
 #include "../game/world.h"
@@ -59,6 +60,14 @@ static short sIntentX = 0;
 static short sIntentY = 0;
 static Boolean sJumpHeld = false;
 static unsigned long sLastPhysicsTick = 0;
+static Boolean sWorldDirty = false;
+static unsigned long sLastSaveTick = 0;
+
+/* Last frame's camera, so a pan can scroll the previous image instead of
+ * recomposing the whole view. */
+static short sLastCamX = 0;
+static short sLastCamY = 0;
+static Boolean sHaveFrame = false;
 
 static short sCamX = 0;
 static short sCamY = 0;
@@ -171,9 +180,6 @@ void GameWindow_Initialize(void)
     SetRect(&sTitleStripRect, sDisplayRect.left, kGameViewMargin,
             sDisplayRect.right, (short)(sDisplayRect.top - 1));
 
-    /* Drop the player on top of the plateau at the centre of the island. */
-    Player_Spawn(&sPlayer, 24, 24, (short)(World_TopZ(24, 24) + 1));
-
     /* The HUD works inside these; it never guesses at window geometry. */
     HUD_Layout(&sTitleStripRect, &sBlockSelectorRect, &sDisplayRect);
 
@@ -189,7 +195,35 @@ void GameWindow_Initialize(void)
     sInitialized = true;
     sIsVisible   = false;
 
-    Scene_BuildIsland();
+    /* Resume the last build if there is one; otherwise the island. */
+    if (Save_Exists() && Save_Read() == noErr) {
+        /* Loaded. */
+    }
+    else {
+        Scene_BuildIsland();
+    }
+
+    /* Spawn *after* the world exists, and on ground that is actually clear. The
+     * island's centre is the hut, whose roof is the topmost block the world can
+     * hold (z = 7): spawning there put the player at z = 8, outside the world, so
+     * it fell for ever. Pick the nearest clear column to the centre instead. */
+    {
+        short sx = 20;
+        short sy = 30;
+        short keep = 0;
+
+        /* Spiral out from the chosen spot until a column has ground and no
+         * structure above the plateau; 8 is comfortably clear of the hut. */
+        for (keep = 0; keep < 16; keep++) {
+            short tz = World_TopZ((short)(sx + keep), sy);
+
+            if (tz >= 0 && tz < 7) {
+                sx = (short)(sx + keep);
+                break;
+            }
+        }
+        Player_Spawn(&sPlayer, sx, sy, (short)(World_TopZ(sx, sy) + 1));
+    }
     Sfx_Init();
 
     /* Take the front. The game is launched from Startup Items, so the Finder
@@ -413,6 +447,29 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     }
 
     KillPoly(poly);
+}
+
+/* The rectangle the held block occupies, so the swing can repaint just that
+ * instead of the whole display. */
+static void HeldBlockRect(Rect *out)
+{
+    SetRect(out, (short)(sDisplayRect.right - 130), (short)(sDisplayRect.bottom - 100),
+            (short)(sDisplayRect.right - 10), (short)(sDisplayRect.bottom - 8));
+}
+
+/* The rectangle the player's figure occupies at its current position. */
+static void PlayerFigureRect(Rect *out)
+{
+    short px = (short)(sPlayer.x >> 16);
+    short py = (short)(sPlayer.y >> 16);
+    short pz = (short)(sPlayer.z >> 16);
+    short sx, sy;
+
+    Iso_Project(px, py, pz, sCamX, sCamY, &sx, &sy);
+    sx = (short)(sx + sDisplayRect.left);
+    sy = (short)(sy + sDisplayRect.top);
+
+    SetRect(out, (short)(sx - 10), (short)(sy - 32), (short)(sx + 10), (short)(sy + 6));
 }
 
 /* Keep the player in the middle of the play area. The camera offsets are what
@@ -915,6 +972,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
             /* Remove the top block of the column */
             if (topZ >= 0 && World_Set(x, y, topZ, 0)) {
                 Sfx_Play(kSfxBreak);
+                sWorldDirty = true;
                 InvalidateColumn(x, y, topZ);
             }
         }
@@ -923,6 +981,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
             newZ = (short)(topZ + 1);
             if (newZ < kWorldZ && World_Set(x, y, newZ, (BlockID)(sBlockType + 1))) {
                 Sfx_Play(kSfxPlace);
+                sWorldDirty = true;
                 sSwingUntil = (unsigned long)TickCount() + 8;
                 InvalidateColumn(x, y, newZ);
             }
@@ -1123,6 +1182,54 @@ static void GameWindow_Render(void)
      * view a black rectangle. White pattern + RGB background colour gives a
      * solid tint on colour displays and white on 1-bit ones. */
     DetectColor();
+    /* A camera pan with nothing else dirty is the common case while walking.
+     * Rather than recompose every visible face, shift the frame that is already
+     * on screen and redraw only the strip that the shift exposes. */
+    if (sHaveFrame && Sprite_Ready() &&
+        sRenderRect.left == sDisplayRect.left && sRenderRect.right == sDisplayRect.right &&
+        sRenderRect.top == sDisplayRect.top && sRenderRect.bottom == sDisplayRect.bottom &&
+        (sCamX != sLastCamX || sCamY != sLastCamY)) {
+        short dx = (short)(sCamX - sLastCamX);
+        short dy = (short)(sCamY - sLastCamY);
+        short w = (short)(sDisplayRect.right - sDisplayRect.left);
+        short h = (short)(sDisplayRect.bottom - sDisplayRect.top);
+
+        if (dx > -w && dx < w && dy > -h && dy < h) {
+            Rect exposed;
+
+            Sprite_BeginFrame();
+            Sprite_ScrollRect(&sDisplayRect, dx, dy);
+            Sprite_EndFrame();
+
+            /* The exposed strip is a band on the side the content came from, plus
+             * the orthogonal band at the top or bottom: one rectangle covering
+             * both is simpler and still small. */
+            exposed = sDisplayRect;
+            if (dx > 0) {
+                exposed.right = (short)(exposed.left + dx + kTileW);
+            }
+            else if (dx < 0) {
+                exposed.left = (short)(exposed.right + dx - kTileW);
+            }
+            if (dy > 0) {
+                exposed.top = (short)(exposed.top - 0);
+                exposed.bottom = (short)(sDisplayRect.top + dy + kTileH * 2);
+            }
+            else if (dy < 0) {
+                exposed.bottom = (short)(sDisplayRect.bottom + dy + kTileH * 2);
+            }
+            if (dx == 0) {
+                exposed.left = sDisplayRect.left;
+                exposed.right = sDisplayRect.right;
+            }
+            if (dy == 0) {
+                exposed.top = sDisplayRect.top;
+                exposed.bottom = sDisplayRect.bottom;
+            }
+            sRenderRect = exposed;
+        }
+    }
+
     if (sHasColor && Sprite_Ready()) {
         /* Minecraft's sky: one flat blue with flat white clouds, painted through
          * the pixel path so the colours are exactly what is asked for. Scoped to
@@ -1212,12 +1319,17 @@ static void GameWindow_Render(void)
 
     Sprite_BeginFrame();
     Sprite_SetView(&sTitleStripRect);
-    HUD_DrawStrip(HoveredBlock(),
-                  (BlockID)(sBlockType + 1), sCamX, sCamY);
+    HUD_DrawStrip(HoveredBlock(), (BlockID)(sBlockType + 1),
+                  sHoverValid ? sHoverX : (short)(sPlayer.x >> 16),
+                  sHoverValid ? sHoverY : (short)(sPlayer.y >> 16));
     Sprite_SetView(&sBlockSelectorRect);
     HUD_DrawHotbar((BlockID)(sBlockType + 1), kGameNumBlockTypes);
     Sprite_SetView(&sDisplayRect);
     Sprite_EndFrame();
+
+    sLastCamX = sCamX;
+    sLastCamY = sCamY;
+    sHaveFrame = true;
 
     SetPenState(&savedPen);
 }
@@ -1290,9 +1402,13 @@ void GameWindow_HandleEvent(EventRecord *event)
     }
 
     UpdateHover();
-    /* Keep the held block's swing animating: nothing else invalidates it. */
+    /* Keep the held block's swing animating: nothing else invalidates it, and
+     * only the block's own corner needs repainting. */
     if (sSwingUntil > (unsigned long)TickCount()) {
-        MarkDirty(&sDisplayRect);
+        Rect swingRect;
+
+        HeldBlockRect(&swingRect);
+        MarkDirty(&swingRect);
     }
     FlushDirty();
 }
@@ -1327,11 +1443,55 @@ WindowRef GameWindow_GetWindowRef(void)
 }
 
 /* Determine if the window is visible */
+/* Write the world now, for the quit path and the harness. */
+OSErr GameWindow_SaveWorld(void)
+{
+    if (Save_Write() == noErr) {
+        sWorldDirty = false;
+    }
+    return noErr;
+}
+
+/* Harness hook: walk with the same intent the keyboard sets, for a number of
+ * physics ticks, then recentre. This exists because the harness cannot deliver
+ * keyboard events into the guest; it drives Player_Step exactly as the game
+ * does, so the evidence is about the game and not about the driver. */
+void GameWindow_WalkForTest(short dx, short dy, short ticks)
+{
+    short i;
+
+    for (i = 0; i < ticks; i++) {
+        Player_Step(&sPlayer, dx, dy, false);
+    }
+    CentreOnPlayer();
+    MarkDirty(&sDisplayRect);
+    FlushDirty();
+}
+
+/* Harness hook: jump once and let it land. */
+void GameWindow_JumpForTest(void)
+{
+    short i;
+
+    Player_Step(&sPlayer, 0, 0, true);
+    for (i = 0; i < 60; i++) {
+        Player_Step(&sPlayer, 0, 0, false);
+    }
+    CentreOnPlayer();
+    MarkDirty(&sDisplayRect);
+    FlushDirty();
+}
+
 /* Player state for the harness: the simulation is provable, so the harness
  * asserts on it instead of trusting a picture. */
 Boolean GameWindow_PlayerGrounded(void)
 {
     return sPlayer.onGround;
+}
+
+short GameWindow_PlayerTileX(void)
+{
+    return (short)(sPlayer.x >> 16);
 }
 
 short GameWindow_PlayerZ(void)
@@ -1354,6 +1514,12 @@ short GameWindow_PlayerJumpPeakForTest(void)
     short i;
 
     save = sPlayer;
+
+    /* Settle first: a jump does nothing mid-air, and the window has only just
+     * opened when the harness asks. */
+    for (i = 0; i < 30; i++) {
+        Player_Step(&sPlayer, 0, 0, false);
+    }
     start = (short)(sPlayer.z >> 16);
     peak = 0;
 
@@ -1370,6 +1536,7 @@ short GameWindow_PlayerJumpPeakForTest(void)
 /* Rebuild the island and respawn the player, for the Game menu's Reset World. */
 void GameWindow_ResetWorld(void)
 {
+    Save_Delete();
     Scene_BuildIsland();
     Player_Spawn(&sPlayer, 24, 24, (short)(World_TopZ(24, 24) + 1));
     CentreOnPlayer();
@@ -1462,7 +1629,8 @@ void GameWindow_ToggleBlockType(void)
 /* Perform idle processing: turn a recorded dirty rect into an InvalRect. */
 void GameWindow_Idle(void)
 {
-    static Boolean sFronted = false;
+    static unsigned long sFrontFirst = 0;
+    static unsigned long sFrontLast = 0;
 
     if (!sInitialized || sWindow == NULL || !sIsVisible) {
         return;
@@ -1473,37 +1641,27 @@ void GameWindow_Idle(void)
      * finished launching, and the Finder then comes forward over it -- leaving
      * the window inactive, so its clicks went to the desktop and the menu bar
      * belonged to the Finder. */
-    if (!sFronted) {
-        ProcessSerialNumber psn;
-
-        sFronted = true;
-        if (GetCurrentProcess(&psn) == noErr) {
-            SetFrontProcess(&psn);
-        }
-    }
-
-    /* Physics runs at a fixed 60 Hz whatever the event rate: gravity must not
-     * depend on how often the user moves the mouse. Catch-up is capped so a long
-     * pause cannot teleport the player. */
+    /* Take the front and keep it until we actually have it. A single request at
+     * startup loses the race with the Finder, which comes forward after Startup
+     * Items finish; the window then sits inactive, so its clicks go to the
+     * desktop and its keys go nowhere. Asking again while somebody else owns the
+     * front fixes that without fighting the user: the moment we are front, this
+     * stops. */
     {
+        static unsigned long sLastFrontTry = 0;
         unsigned long now = (unsigned long)TickCount();
-        short steps = 0;
 
-        if (sLastPhysicsTick == 0) {
-            sLastPhysicsTick = now;
-        }
-        while (sLastPhysicsTick != now && steps < 3) {
-            Player_Step(&sPlayer, sIntentX, sIntentY, sJumpHeld);
-            sLastPhysicsTick++;
-            steps++;
-        }
-        if (steps > 0) {
-            CentreOnPlayer();
-            MarkDirty(&sDisplayRect);
-            /* A key press is one deliberate nudge, not a held movement. */
-            sIntentX = 0;
-            sIntentY = 0;
-            sJumpHeld = false;
+        if (sLastFrontTry == 0 || (unsigned long)(now - sLastFrontTry) > 60) {
+            ProcessSerialNumber mine;
+            ProcessSerialNumber front;
+
+            sLastFrontTry = now;
+            if (GetCurrentProcess(&mine) == noErr &&
+                (GetFrontProcess(&front) != noErr ||
+                 (front.highLongOfPSN != mine.highLongOfPSN ||
+                  front.lowLongOfPSN != mine.lowLongOfPSN))) {
+                SetFrontProcess(&mine);
+            }
         }
     }
 
@@ -1511,9 +1669,13 @@ void GameWindow_Idle(void)
      * the Finder after a Startup Items launch, so it receives no events at all
      * and GetMouse is the only way to follow the pointer. */
     UpdateHover();
-    /* Keep the held block's swing animating: nothing else invalidates it. */
+    /* Keep the held block's swing animating: nothing else invalidates it, and
+     * only the block's own corner needs repainting. */
     if (sSwingUntil > (unsigned long)TickCount()) {
-        MarkDirty(&sDisplayRect);
+        Rect swingRect;
+
+        HeldBlockRect(&swingRect);
+        MarkDirty(&swingRect);
     }
 
     FlushDirty();

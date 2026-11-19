@@ -232,12 +232,6 @@ void HUD_DrawHeld(BlockID selected, short swing)
     }
 
     by = (short)(by + drop);
-    {
-        Rect probe;
-
-        SetRect(&probe, bx, by, (short)(bx + 6), (short)(by + 6));
-        Sprite_FillRect(&probe, 0xFF00FFUL);
-    }
     Sprite_DrawScaled((short)(bx + 32), by, selected, kBlockFaceTop, 0, 2);
     Sprite_DrawScaled((short)(bx + 32), (short)(by + 16), selected, kBlockFaceLeft, 1, 2);
     Sprite_DrawScaled((short)(bx + 64), (short)(by + 16), selected, kBlockFaceRight, 2, 2);

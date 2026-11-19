@@ -21,6 +21,8 @@
 #include "game/world.h"
 #include "selftest.h"
 #include "sound/sfx.h"
+#include "game/save.h"
+#include "game/blocks.h"
 #include "ui/game_window.h"
 #include "ui/window_manager.h"
 
@@ -184,11 +186,41 @@ void SelfTest_Run(void)
     Pump(60);
 
     LogLine("game_visible=", NULL, (long)GameWindow_IsVisible(), true);
+    /* Persistence: save, clobber a cell, reload, and check it came back. */
+    {
+        BlockID before = World_Get(24, 24, World_TopZ(24, 24));
+
+        OSErr wrote = Save_Write();
+        OSErr read;
+        short z = World_TopZ(24, 24);
+
+        LogLine("save_write=", NULL, (long)wrote, true);
+        World_Set(24, 24, z, kBlockEmpty);
+        read = Save_Read();
+        LogLine("save_read=", NULL, (long)read, true);
+        /* The round trip only counts when both calls succeeded: a failed write
+         * and a failed read leave the world unchanged, which looks like success
+         * if you only compare the cell. */
+        LogLine("save_roundtrip=", NULL,
+                (long)(wrote == noErr && read == noErr &&
+                       World_Get(24, 24, z) == before), true);
+    }
     /* The player is a simulation, so the harness can prove it lands and jumps
      * rather than trusting the picture. */
     LogLine("player_grounded=", NULL, (long)GameWindow_PlayerGrounded(), true);
     LogLine("player_z=", NULL, (long)GameWindow_PlayerZ(), true);
     LogLine("player_jump_peak=", NULL, (long)GameWindow_PlayerJumpPeakForTest(), true);
+    {
+        short beforeX = GameWindow_PlayerTileX();
+        short beforeZ = GameWindow_PlayerZ();
+
+        /* Walk east for 20 ticks (two blocks) and report where that left us. */
+        GameWindow_WalkForTest(1, 0, 20);
+        LogLine("walk_dx=", NULL, (long)(GameWindow_PlayerTileX() - beforeX), true);
+        GameWindow_JumpForTest();
+        LogLine("jump_landed=", NULL, (long)(GameWindow_PlayerZ() == beforeZ), true);
+
+    }
     LogLine("player_respawns=", NULL, (long)GameWindow_PlayerRespawns(), true);
     {
         OSErr err = Sfx_LastError();
@@ -248,7 +280,9 @@ void SelfTest_Run(void)
     GameWindow_StateForTest(&camX, &camY, &blockType);
     LogLine("block_type_after=", NULL, blockType, true);
 
-    /* Hold the final state for ~12 s so the harness can photograph it. */
+    /* Hold the final state for ~12 s so the harness can photograph it. A
+     * "hold" trigger in Preferences skips the exit entirely, which is what
+     * interactive checks need: the game window has to stay up to be driven. */
     Pump(1800);
     LogLine("done", NULL, 0, false);
 
@@ -260,5 +294,16 @@ void SelfTest_Run(void)
     /* The harness reads the log off the clone after the VM is killed, so push
      * it out of the guest's cache first. */
     FlushVol(NULL, 0);
+
+    {
+        static const unsigned char kHoldName[] = "\pMacCraft selftest hold";
+        FSSpec holdSpec;
+
+        if (FindPrefsFile(&holdSpec, kHoldName)) {
+            /* Stay resident: the harness drives the running game. */
+            return;
+        }
+    }
+
     ExitToShell();
 }

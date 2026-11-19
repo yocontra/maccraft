@@ -38,6 +38,7 @@ set(SRC_C
     src/game/iso.c
     src/game/pick.c
     src/game/player.c
+    src/game/save.c
     src/sound/sfx.c
     src/game/texture.c
     src/game/dither.c
@@ -66,6 +67,7 @@ set(HEADER_FILES
     src/game/iso.h
     src/game/pick.h
     src/game/player.h
+    src/game/save.h
     src/sound/sfx.h
     src/game/texture.h
     src/game/dither.h

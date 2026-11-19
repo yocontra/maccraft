@@ -20,6 +20,10 @@ Boolean Sprite_Ready(void);
 /* Play area, in the window's local coordinates; blits are trimmed to it. */
 void Sprite_SetView(const Rect *view);
 
+/* Shift the pixels inside r by (dx, dy) within the screen. Used to scroll the
+ * previous frame when the camera pans, so only the exposed strip is redrawn. */
+void Sprite_ScrollRect(const Rect *r, short dx, short dy);
+
 /* Fill a rectangle in the window's local coordinates with an 0x00RRGGBB colour,
  * through the sprite pixel path. Used by the HUD. */
 void Sprite_FillRect(const Rect *r, unsigned long rgb);

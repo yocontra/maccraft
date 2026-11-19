@@ -24,11 +24,17 @@ Boolean GameWindow_IsVisible(void);
 /* Rebuild the island and respawn the player. */
 void GameWindow_ResetWorld(void);
 
+/* Write the world to disk now. */
+OSErr GameWindow_SaveWorld(void);
+
 /* Player state for the harness. */
 Boolean GameWindow_PlayerGrounded(void);
 short GameWindow_PlayerZ(void);
+short GameWindow_PlayerTileX(void);
 short GameWindow_PlayerRespawns(void);
 short GameWindow_PlayerJumpPeakForTest(void);
+void GameWindow_WalkForTest(short dx, short dy, short ticks);
+void GameWindow_JumpForTest(void);
 
 /* Harness hook: repaint `iterations` times, return elapsed ticks. */
 unsigned long GameWindow_TimeRender(short iterations, short *outBlocks);

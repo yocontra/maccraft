@@ -280,6 +280,13 @@ if [ "${MAC_EMU_SELFTEST:-0}" = "1" ] || [ -f "$WORK/request-selftest" ]; then
     : > "$PREFSDIR/$SELFTEST_NAME selftest"
     [ -f "$PREFSDIR/$SELFTEST_NAME selftest" ] || die "could not create the selftest trigger"
     echo "make_vm: selftest trigger in System Folder:Preferences"
+    # A hold trigger keeps the app resident after its checks, so the harness can
+    # drive the running game instead of photographing a window that is about to
+    # exit.
+    if [ "${MAC_EMU_HOLD:-0}" = "1" ]; then
+        : > "$PREFSDIR/$SELFTEST_NAME selftest hold"
+        echo "make_vm: selftest hold trigger (app stays up)"
+    fi
 else
     rm -f "$MNT/System Folder/Preferences/$SELFTEST_NAME selftest" 2>/dev/null || true
 fi

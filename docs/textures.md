@@ -100,3 +100,26 @@ picture there.
 A side face is no longer one flat shade: the bake darkens it in three steps from
 top to bottom (`RowShade`), which reads as Minecraft's smooth lighting where a
 face meets the ground. Side faces stop looking like they float.
+
+## Rendering cost, second pass
+
+Two things dominated the "it rescans the map all the time" report, and neither was
+the rasteriser:
+
+- The idle loop marked the whole display dirty on **every physics tick** because
+  it repainted whenever `onGround` was false. A player spawned inside geometry
+  never landed, so the display was repainted sixty times a second. It is now
+  invalidated only when the camera moved, or when the player crossed into another
+  pixel.
+- The held block's swing marked the whole display dirty for its eight ticks; it
+  marks the block's own corner now.
+
+A camera pan no longer recomposes the scene at all: `Sprite_ScrollRect` shifts the
+frame that is already on the screen and the renderer redraws only the strip that
+the shift exposes. That is the difference between a full 25-tick pass and a couple
+of memmove rows per tick while walking.
+
+The spawn point was also wrong in a way that hid itself: the island's centre is the
+hut, and the hut's roof is the top block the world can hold (z = 7), so spawning at
+`TopZ + 1` put the player at z = 8, outside the world, falling for ever. The spawn
+now walks out from the centre to the first column with ground and no structure.

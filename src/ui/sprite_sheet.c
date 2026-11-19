@@ -396,6 +396,94 @@ void Sprite_FillRect(const Rect *r, unsigned long rgb)
     }
 }
 
+/* Move the pixels inside r by (dx, dy), leaving the vacated band untouched.
+ *
+ * This is what makes a camera pan cheap: the previous frame is shifted and only
+ * the exposed strip is redrawn, instead of recomposing two thousand faces. Rows
+ * are copied in the direction that cannot overwrite source data, and the copy
+ * within a row uses memmove semantics for the same reason. */
+void Sprite_ScrollRect(const Rect *r, short dx, short dy)
+{
+    short y, yStart, yEnd, yStep;
+    short x0, x1;
+    short width;
+
+    if (!sReady || sScreenBase == NULL || r == NULL || (dx == 0 && dy == 0)) {
+        return;
+    }
+    if (dx <= -sScreenWidth || dx >= sScreenWidth || dy <= -sScreenHeight || dy >= sScreenHeight) {
+        return;
+    }
+
+    x0 = (short)(r->left + sOriginX);
+    x1 = (short)(r->right + sOriginX);
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    if (x1 > sScreenWidth) {
+        x1 = sScreenWidth;
+    }
+    width = (short)(x1 - x0);
+    if (width <= 0) {
+        return;
+    }
+
+    /* Vertical order: walking down would overwrite rows that are still to be
+     * read when dy is positive, so positive deltas walk upwards. */
+    if (dy > 0) {
+        yStart = (short)(r->bottom + sOriginY - 1);
+        yEnd = (short)(r->top + sOriginY - 1);
+        yStep = -1;
+    }
+    else {
+        yStart = (short)(r->top + sOriginY);
+        yEnd = (short)(r->bottom + sOriginY);
+        yStep = 1;
+    }
+
+    for (y = yStart; y != yEnd; y = (short)(y + yStep)) {
+        short srcY = (short)(y - dy);
+        Ptr dst;
+        Ptr src;
+        short copyX0;
+        short copyWidth;
+
+        if (y < 0 || y >= sScreenHeight || srcY < 0 || srcY >= sScreenHeight) {
+            continue;
+        }
+        dst = sScreenBase + (long)y * sScreenRowBytes;
+        src = sScreenBase + (long)srcY * sScreenRowBytes;
+
+        if (dx > 0) {
+            copyX0 = (short)(x0 + dx);
+            copyWidth = (short)(width - dx);
+        }
+        else {
+            copyX0 = x0;
+            copyWidth = (short)(width + dx);
+        }
+        if (copyWidth <= 0) {
+            continue;
+        }
+
+        /* memmove by hand: the regions can overlap when dx is small. */
+        if (dx > 0) {
+            short i;
+
+            for (i = copyWidth - 1; i >= 0; i--) {
+                ((unsigned long *)dst)[copyX0 + i] = ((unsigned long *)src)[copyX0 + i - dx];
+            }
+        }
+        else {
+            short i;
+
+            for (i = 0; i < copyWidth; i++) {
+                ((unsigned long *)dst)[copyX0 + i] = ((unsigned long *)src)[copyX0 + i - dx];
+            }
+        }
+    }
+}
+
 void Sprite_SetView(const Rect *view)
 {
     if (view != NULL) {

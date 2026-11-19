@@ -111,7 +111,9 @@ void DoMenuCommand(long menuCommand)
             break;
 
         case kItemQuit:
-            /* Clean up resources before quitting using standard function */
+            /* Save the world before quitting: a build that vanishes on relaunch
+             * is not a game. */
+            GameWindow_SaveWorld();
             QuitApplication(false);
             break;
         }
