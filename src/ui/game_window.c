@@ -1260,10 +1260,11 @@ static void GameWindow_Render(void)
         short w = (short)(sDisplayRect.right - sDisplayRect.left);
         short h = (short)(sDisplayRect.bottom - sDisplayRect.top);
 
-        /* Only a small pan may scroll: a big jump (the first frames, when the
-         * camera is still converging from zero, or a teleport) would shift a
-         * frame that does not cover the new view and leave the rest blank. */
-        if (dx > -kTileW * 2 && dx < kTileW * 2 && dy > -kTileH * 2 && dy < kTileH * 2) {
+        /* Any pan that stays inside the view may scroll. The old limit of two
+         * tiles sent every real pan -- the camera leaves the dead zone a fifth of
+         * the view away -- down the full-recompose path at 61 ticks a frame,
+         * which is the second-per-step the game felt like. */
+        if (dx > -w && dx < w && dy > -h && dy < h) {
             Rect exposed;
 
             Sprite_BeginFrame();
