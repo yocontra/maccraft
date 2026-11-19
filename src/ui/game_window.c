@@ -62,10 +62,16 @@ static Pattern *BlockPattern(BlockID id)
  * are what a colour display actually fills with. */
 static const RGBColor kSceneBack   = {0x8800, 0xAA00, 0xDD00};
 static const RGBColor kSceneGround = {0x9999, 0x8888, 0x6666};
+/* Texture for the colour path. Sparse on purpose: a 50% pattern at 32x16
+ * turns into a checkerboard of noise, while one dot per 8x8 cell reads as
+ * grain and still lets the base colour dominate. */
+static const Pattern kGrainSparse = {0x11, 0x00, 0x44, 0x00, 0x11, 0x00, 0x00, 0x22};
+static const Pattern kGrainMedium = {0x11, 0x44, 0x00, 0x11, 0x88, 0x00, 0x22, 0x00};
+
 static const RGBColor kOutline     = {0x0000, 0x0000, 0x0000};
 
 static const RGBColor kGrassTop    = {0x0000, 0xBB00, 0x2200};
-static const RGBColor kGrassLeft   = {0x0000, 0x7700, 0x1100};
+static const RGBColor kGrassLeft   = {0x0000, 0x5500, 0x0000};
 static const RGBColor kGrassRight  = {0x0000, 0x8800, 0x1800};
 
 static const RGBColor kDirtTop     = {0xAA00, 0x5500, 0x0000};
@@ -273,11 +279,15 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     ClosePoly();
 
     if (sHasColor && id >= 1 && id <= 3) {
-        /* Flat shades on a colour display: a dithered grain turns into visible
-         * noise on a 256-colour Mac, and the three face shades plus the black
-         * outline are what make the shape read. */
+        /* Base colour, then a sparse grain in a darker shade of it. Without the
+         * grain a plateau of identical tops reads as one flat diamond: the
+         * texture is what tells you it is made of blocks. */
         RGBForeColor(FaceColor(id, face));
+        RGBBackColor(FaceColor(id, face));
         FillPoly(poly, &qd.black);
+
+        RGBForeColor(FaceGrainColor(id, face));
+        FillPoly(poly, face == 0 ? &kGrainSparse : &kGrainMedium);
     }
     else {
         /* One bit per pixel: texture is the only way to tell the faces and the
@@ -311,15 +321,10 @@ static void DrawBlock(short x, short y, short z, BlockID id)
     PaintQuad(sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
               sx, sy + kTileH, id, 2);
 
-    /* 1px outline so adjacent faces stay separable. The pen takes its colour
-     * from the fore colour, so set that too or the outline is invisible. */
-    RGBForeColor(&kOutline);
-    PenPat(&qd.black);
-    MoveTo(sx, sy - kTileH / 2);
-    LineTo(sx + kTileW / 2, sy);
-    LineTo(sx, sy + kTileH / 2);
-    LineTo(sx - kTileW / 2, sy);
-    LineTo(sx, sy - kTileH / 2);
+    /* No outline. A block is separated from its neighbours by the shade step
+     * between the top face and the two sides plus the contact shadow, exactly
+     * as in the reference art; a 1 px black grid over every face is what made
+     * the world look like a spreadsheet. */
 }
 
 /* Inverse of Iso_Project's documented z=0 mapping, clamped to the world.

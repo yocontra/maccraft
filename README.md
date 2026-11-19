@@ -10,6 +10,8 @@ against the classic Macintosh Toolbox and compiled with
 68020-only code: everything is integer 2D QuickDraw, so it runs on a Mac Plus
 or SE as well as a Quadra.
 
+<img src="docs/img/game.png" alt="MacCraft: a textured green block plateau on a blue sky, with the block selector along the bottom" width="100%">
+
 ## Controls
 
 | Action | Input |
