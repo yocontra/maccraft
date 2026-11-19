@@ -24,6 +24,10 @@ Boolean Remote_Take(char *buf, short max);
  * file so the host can see whether the command was understood. */
 void Remote_SetResult(const char *text);
 
+/* Launch a build from the shared folder and quit this one. Does not return when
+ * it succeeds, which is why it is a separate call rather than a verb return. */
+Boolean Remote_Launch(const char *name);
+
 /* Write the receipt for a command the caller has acted on. */
 void Remote_Ack(const char *cmd);
 

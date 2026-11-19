@@ -93,6 +93,14 @@ int main(void)
         SelfTest_Run(); /* does not return */
     }
 
+    /* Or to go straight into the game: that is what a relaunched build does when
+     * the harness swaps in a new binary, rather than showing the splash and
+     * waiting for a click nobody can make from the host. */
+    if (SelfTest_PlayRequested()) {
+        WindowManager_OpenWindow(kWindowTypeGame);
+        WindowManager_CloseWindow(kWindowTypeSplash);
+    }
+
     /*----------------------------------------
      * Main event loop
      *----------------------------------------*/

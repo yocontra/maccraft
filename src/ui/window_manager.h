@@ -47,6 +47,9 @@ WindowRef WindowManager_GetWindowRef(WindowType windowType);
 /* Check if a window is visible */
 Boolean WindowManager_IsWindowVisible(WindowType windowType);
 
+/* Harness: which window type keystrokes are routed to. */
+short WindowManager_ForegroundForTest(void);
+
 /* Handle all event types and route to appropriate handler */
 void WindowManager_HandleEvent(EventRecord *event);
 

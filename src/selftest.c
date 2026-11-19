@@ -121,6 +121,25 @@ static void LogLine(const char *a, const char *b, long num, Boolean withNum)
     FSWrite(sLogRef, &count, line);
 }
 
+/* A "play" trigger means the harness wants the game window, not the self-test:
+ * it is how a relaunched build goes straight back into the game instead of
+ * showing the splash (or re-running the checks). */
+Boolean SelfTest_PlayRequested(void)
+{
+    static const unsigned char kPlayName[] = "\pMacCraft play";
+    static const unsigned char kTriggerName2[] = "\pMacCraft selftest";
+    FSSpec spec;
+
+    if (!FindPrefsFile(&spec, kPlayName)) {
+        return false;
+    }
+    /* Consume the self-test trigger so the next launch does not run it again. */
+    if (FindPrefsFile(&spec, kTriggerName2)) {
+        FSpDelete(&spec);
+    }
+    return true;
+}
+
 static Boolean OpenLog(void)
 {
     FSSpec spec;
@@ -186,6 +205,39 @@ void SelfTest_Run(void)
     Pump(60);
 
     LogLine("game_visible=", NULL, (long)GameWindow_IsVisible(), true);
+    {
+        extern long Sprite_Work[6];
+
+        LogLine("hover_ticks=", NULL, Sprite_Work[0], true);
+        LogLine("hover_calls=", NULL, Sprite_Work[1], true);
+        LogLine("paint_ticks=", NULL, Sprite_Work[2], true);
+        LogLine("paint_count=", NULL, Sprite_Work[3], true);
+        LogLine("physics_steps=", NULL, Sprite_Work[5], true);
+    }
+
+    /* Keyboard routing, through the same WindowManager_HandleEvent the real
+     * event loop uses. The hooks elsewhere call the game directly, which is why
+     * they passed while the actual keyboard did nothing. */
+    {
+        short beforeX = GameWindow_PlayerTileX();
+        short i;
+
+        for (i = 0; i < 12; i++) {
+            EventRecord e;
+
+            memset(&e, 0, sizeof e);
+            e.what = keyDown;
+            e.message = 'w';
+            e.modifiers = 0;
+            e.where.h = 100;
+            e.where.v = 100;
+            WindowManager_HandleEvent(&e);
+            WindowManager_Idle();
+        }
+        LogLine("key_walk_dy=", NULL, (long)(GameWindow_PlayerTileY()), true);
+        LogLine("key_walk_before=", NULL, (long)beforeX, true);
+        LogLine("foreground=", NULL, (long)WindowManager_ForegroundForTest(), true);
+    }
     /* Persistence: save, clobber a cell, reload, and check it came back. */
     {
         BlockID before = World_Get(24, 24, World_TopZ(24, 24));

@@ -31,6 +31,7 @@ OSErr GameWindow_SaveWorld(void);
 Boolean GameWindow_PlayerGrounded(void);
 short GameWindow_PlayerZ(void);
 short GameWindow_PlayerTileX(void);
+short GameWindow_PlayerTileY(void);
 short GameWindow_PlayerRespawns(void);
 short GameWindow_PlayerJumpPeakForTest(void);
 void GameWindow_WalkForTest(short dx, short dy, short ticks);

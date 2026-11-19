@@ -187,3 +187,20 @@ pixel in four of the water surface is left unpainted and the bed shows through.
 Fifty percent looked like a screen door; a quarter reads as depth, and the
 texture's own wave bands still show. Bands with holes take a per-pixel draw path
 because the run-based fast path would fill the holes in.
+
+## The reload loop
+
+Rebooting the guest for every build costs a minute and makes the machine unusable.
+`tests/emulator/reload.sh` instead stages the build into one of two slots in the
+shared folder and drops `launch <slot>` where the running app polls. The app copies
+that build onto the boot volume (data fork and resource fork) and launches it from
+there, then quits itself.
+
+Two things were learned the hard way and are worth keeping: launching straight out
+of the extfs volume kills the emulator outright, twice over, so the copy to local
+disk is not optional; and the two slots alternate because overwriting the file
+being executed is what took the app down on the first attempt at this.
+
+A `MacCraft play` trigger makes the relaunched build go straight into the game
+instead of the splash, and consumes the self-test trigger so the checks do not run
+again. The loop is now about eight seconds from edit to picture.

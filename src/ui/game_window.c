@@ -65,6 +65,9 @@ static short sIntentY = 0;
 static Boolean sJumpHeld = false;
 static unsigned long sLastPhysicsTick = 0;
 static Boolean sWorldDirty = false;
+
+/* Harness counters: where the seconds actually go. */
+long Sprite_Work[6];
 static unsigned long sLastSaveTick = 0;
 static short sWalkPhase = 0;
 
@@ -215,8 +218,22 @@ void GameWindow_Initialize(void)
     sIsVisible   = false;
 
     /* Resume the last build if there is one; otherwise the island. */
+    /* Count what came back: a save that parses but holds nothing useful (a file
+     * written by a broken build, or by a session that started before the scene
+     * existed) must not leave the player standing in an empty world. */
     if (Save_Exists() && Save_Read() == noErr) {
-        /* Loaded. */
+        short x, y, solid = 0;
+
+        for (x = 0; x < kWorldX && solid < 200; x++) {
+            for (y = 0; y < kWorldY && solid < 200; y++) {
+                if (World_TopZ(x, y) >= 0) {
+                    solid++;
+                }
+            }
+        }
+        if (solid < 200) {
+            Scene_BuildIsland();
+        }
     }
     else {
         Scene_BuildIsland();
@@ -242,6 +259,19 @@ void GameWindow_Initialize(void)
             }
         }
         Player_Spawn(&sPlayer, sx, sy, (short)(World_TopZ(sx, sy) + 1));
+    /* Centre before the first paint: the camera starts at zero, so the first
+     * frame would otherwise draw the island off-screen and the partial repaints
+     * that follow never cover the world area again. */
+    {
+        short px = (short)(sPlayer.x >> 16);
+        short py = (short)(sPlayer.y >> 16);
+        short pz = (short)(sPlayer.z >> 16);
+
+        sCamX = (short)((sDisplayRect.right - sDisplayRect.left) / 2 -
+                        (px - py) * (kTileW / 2));
+        sCamY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2 -
+                        ((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+    }
     }
     Sfx_Init();
 
@@ -414,6 +444,18 @@ static void ApplyRemoteCommand(const char *cmd)
         else {
             Remote_SetResult("select out of range");
         }
+    }
+    else if (strncmp(cmd, "launch", 6) == 0) {
+        const char *p = cmd + 6;
+
+        while (*p == ' ') {
+            p++;
+        }
+        Remote_SetResult("launch");
+        Remote_Ack(cmd);
+        Remote_Launch(p);
+        /* Only reached when the launch failed. */
+        Remote_SetResult("launch failed");
     }
     else if (strncmp(cmd, "save", 4) == 0) {
         Remote_SetResult("save");
@@ -636,7 +678,16 @@ static void UpdateHover(void)
     Boolean valid;
 
     /* GetMouse is in global coordinates; the picker works in the window's. */
+    static Point sLastMouse = {-1, -1};
+
     GetMouse(&mouse);
+    if (!sHoverValid && mouse.h == sLastMouse.h && mouse.v == sLastMouse.v) {
+        /* Nothing moved and we already know the answer (including "nothing
+         * there"): the pick searches every column near the pointer and runs on
+         * every idle tick, so skipping it matters more than it looks. */
+        return;
+    }
+    sLastMouse = mouse;
     {
         GrafPtr saved;
 
@@ -944,6 +995,15 @@ static void GameWindow_Render(void)
 
     SetPort(sWindow);
     GetPenState(&savedPen);
+    {
+        /* Paint timing for the harness: Sprite_Work[2] accumulates ticks spent
+         * painting and [3] counts paints, so average frame cost is one divide. */
+        static unsigned long sPaintStart = 0;
+
+        sPaintStart = (unsigned long)TickCount();
+        sPaintStart = sPaintStart; /* start */
+        Sprite_Work[4] = (long)sPaintStart;
+    }
 
     /* The window can be dragged, so the offset used for direct screen writes is
      * recomputed here rather than captured once at creation. */
@@ -963,7 +1023,14 @@ static void GameWindow_Render(void)
      * by the port, and the world pass trims its direct pixel writes to this
      * rect, so a small invalidation -- the selection box moving under the mouse
      * -- costs a few hundred pixels instead of a full frame. */
-    {
+    if (!sHaveFrame) {
+        /* First paint after launch: repaint everything. The update region at that
+         * moment can be smaller than the window (the first invalidate is often
+         * just the strip), and the sky and world writes are scoped to this rect,
+         * so taking it at face value left most of the window white. */
+        sRenderRect = sDisplayRect;
+    }
+    else {
         RgnHandle clip = NewRgn();
 
         if (clip != NULL) {
@@ -1002,7 +1069,10 @@ static void GameWindow_Render(void)
         short w = (short)(sDisplayRect.right - sDisplayRect.left);
         short h = (short)(sDisplayRect.bottom - sDisplayRect.top);
 
-        if (dx > -w && dx < w && dy > -h && dy < h) {
+        /* Only a small pan may scroll: a big jump (the first frames, when the
+         * camera is still converging from zero, or a teleport) would shift a
+         * frame that does not cover the new view and leave the rest blank. */
+        if (dx > -kTileW * 2 && dx < kTileW * 2 && dy > -kTileH * 2 && dy < kTileH * 2) {
             Rect exposed;
 
             Sprite_BeginFrame();
@@ -1152,6 +1222,13 @@ static void GameWindow_Render(void)
     sLastCamY = sCamY;
     sHaveFrame = true;
 
+    {
+        unsigned long now = (unsigned long)TickCount();
+
+        Sprite_Work[2] += (long)(now - (unsigned long)Sprite_Work[4]);
+        Sprite_Work[3]++;
+    }
+
     SetPenState(&savedPen);
 }
 
@@ -1222,7 +1299,13 @@ void GameWindow_HandleEvent(EventRecord *event)
         break;
     }
 
-    UpdateHover();
+    {
+        unsigned long t0 = (unsigned long)TickCount();
+
+        UpdateHover();
+        Sprite_Work[0] += (long)((unsigned long)TickCount() - t0);
+        Sprite_Work[1]++;
+    }
     /* Keep the held block's swing animating: nothing else invalidates it, and
      * only the block's own corner needs repainting. */
     if (sSwingUntil > (unsigned long)TickCount()) {
@@ -1313,6 +1396,11 @@ Boolean GameWindow_PlayerGrounded(void)
 short GameWindow_PlayerTileX(void)
 {
     return (short)(sPlayer.x >> 16);
+}
+
+short GameWindow_PlayerTileY(void)
+{
+    return (short)(sPlayer.y >> 16);
 }
 
 short GameWindow_PlayerZ(void)
@@ -1522,6 +1610,7 @@ void GameWindow_Idle(void)
         }
         while (sLastPhysics != now && steps < 3) {
             Player_Step(&sPlayer, sIntentX, sIntentY, sJumpHeld);
+            Sprite_Work[5]++;
             sLastPhysics++;
             steps++;
         }
@@ -1613,7 +1702,13 @@ void GameWindow_Idle(void)
     /* Hover is polled here rather than only on events: the app is often behind
      * the Finder after a Startup Items launch, so it receives no events at all
      * and GetMouse is the only way to follow the pointer. */
-    UpdateHover();
+    {
+        unsigned long t0 = (unsigned long)TickCount();
+
+        UpdateHover();
+        Sprite_Work[0] += (long)((unsigned long)TickCount() - t0);
+        Sprite_Work[1]++;
+    }
     /* Keep the held block's swing animating: nothing else invalidates it, and
      * only the block's own corner needs repainting. */
     if (sSwingUntil > (unsigned long)TickCount()) {

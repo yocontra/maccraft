@@ -347,6 +347,11 @@ void WindowManager_HandleEvent(EventRecord *event)
     }
 }
 
+short WindowManager_ForegroundForTest(void)
+{
+    return (short)gForegroundWindowType;
+}
+
 /* Perform idle-time processing */
 void WindowManager_Idle(void)
 {
