@@ -248,6 +248,18 @@ static const RGBColor *FaceGrainColor(BlockID id, short face)
 
 static RGBColor Shaded(const RGBColor *base, short factor);
 
+/* One palette step brighter, clamped: the ink of the face texture. */
+static RGBColor Lightened(const RGBColor *base)
+{
+    RGBColor result;
+    unsigned short bump = 0x1A1A;
+
+    result.red   = (unsigned short)(base->red   > (unsigned short)(0xFFFF - bump) ? 0xFFFF : base->red + bump);
+    result.green = (unsigned short)(base->green > (unsigned short)(0xFFFF - bump) ? 0xFFFF : base->green + bump);
+    result.blue  = (unsigned short)(base->blue  > (unsigned short)(0xFFFF - bump) ? 0xFFFF : base->blue + bump);
+    return result;
+}
+
 /* Convert the palette module's colour into the QuickDraw one. The two structs
  * share a field layout on purpose; this is the only place that relies on it. */
 static RGBColor FromBlockColor(BlockColor c)
@@ -343,27 +355,29 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     }
 
     if (sHasColor) {
-        /* Base colour, then the kind's own grain in a darker shade of the same
-         * hue. The light factor is baked into both, so a shadowed face darkens
-         * as a whole instead of showing bright grain on a dark base. */
-        RGBColor base  = FaceBase(id, face, variation);
-        RGBColor grain = FaceGrain(id, face, variation);
+        /* One patterned fill, two colours: the kind's grain stencil decides
+         * which pixels take the highlight and which take the base. A second
+         * FillPoly is not an option here -- it blacks the polygon out -- but a
+         * single patterned fill is how the 1-bit path has always textured a
+         * face, and the 0-bits take the background colour.
+         *
+         * Ink is one step brighter than the base with a sparse stencil, so a
+         * face is its own colour with a speckle of highlight, which is
+         * Minecraft's surface noise. Inverting that (ink = base, ground =
+         * darker) made every face read as its own shadow and turned the plateau
+         * almost black. */
+        RGBColor base = Shaded(&(RGBColor){FaceBase(id, face, variation).red,
+                                           FaceBase(id, face, variation).green,
+                                           FaceBase(id, face, variation).blue},
+                               shade);
+        RGBColor highlight;
         Pattern stamp;
 
-        base  = Shaded(&base, shade);
-        grain = Shaded(&grain, shade);
-
-        RGBForeColor(&base);
+        highlight = Lightened(&base);
+        Block_Grain(id, face, variation, (unsigned char *)&stamp);
+        RGBForeColor(&highlight);
         RGBBackColor(&base);
-        FillPoly(poly, &qd.black);
-
-        /* No grain overlay here: a second pattern fill on this QuickDraw port
-         * paints the whole polygon black, whether it reuses the handle or builds
-         * a new one. Face texture comes from the baked sprite renderer; this
-         * polygon path is only here until that lands, so it draws flat shaded
-         * faces and nothing else. */
-        (void)grain;
-        (void)stamp;
+        FillPoly(poly, &stamp);
     }
     else {
         /* One bit per pixel: the kind's grain stencil is the only thing that

@@ -35,7 +35,9 @@ The world is a hand-authored island — coast, sand shelf, lagoon, plateau, ston
 ridge with snow, a plank hut and trees — rendered as 32x16 isometric tiles with
 one shade per face (top 1.0, left 0.8, right 0.6, dimmed by neighbouring blocks),
 face culling, a Minecraft-style cloud layer, and a selection wireframe on the
-block under the middle of the view.
+block under the middle of the view. Every face is textured: one patterned fill
+whose ink is a highlight step of the block's colour, so a surface reads as
+material rather than as a flat wash.
 
 Block textures are the next step and are already built: `src/game/art.c` holds a
 64-entry shade-ramp palette and sixteen hand-authored 16x16 textures, and
