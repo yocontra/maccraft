@@ -28,6 +28,9 @@ void Remote_SetResult(const char *text);
  * it succeeds, which is why it is a separate call rather than a verb return. */
 Boolean Remote_Launch(const char *name);
 
+/* Write a one-line stats report into the receipt. */
+void Remote_ReportStats(long paintTicks, long paints, long steps);
+
 /* Write the receipt for a command the caller has acted on. */
 void Remote_Ack(const char *cmd);
 

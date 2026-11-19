@@ -63,6 +63,58 @@ static short ShareVolume(void)
 /* Write the receipt for a command the caller has acted on. Kept separate from
  * Remote_Take because the decision is made after the read returns, and a receipt
  * written before it would describe the previous command. */
+/* Write a stats line into the receipt: paint ticks, paint count, physics steps. */
+void Remote_ReportStats(long paintTicks, long paints, long steps)
+{
+    char line[80];
+    short i = 0;
+    long values[3];
+    short v;
+
+    values[0] = paintTicks;
+    values[1] = paints;
+    values[2] = steps;
+
+    for (v = 0; v < 3; v++) {
+        char digits[12];
+        short n = 0;
+        long value = values[v];
+
+        if (value == 0) {
+            digits[n++] = '0';
+        }
+        while (value > 0) {
+            digits[n++] = (char)('0' + (value % 10));
+            value /= 10;
+        }
+        while (n > 0 && i < (short)sizeof(line) - 2) {
+            line[i++] = digits[--n];
+        }
+        line[i++] = (v == 2) ? '\n' : ' ';
+    }
+
+    sResult[0] = '\0';
+    {
+        short vRef = ShareVolume();
+        FSSpec ack;
+        short ackRef;
+
+        if (vRef == 0 || FSMakeFSSpec(vRef, 0, kAckName, &ack) != noErr) {
+            return;
+        }
+        if (FSpOpenDF(&ack, fsRdWrPerm, &ackRef) != noErr) {
+            return;
+        }
+        {
+            long wrote = i;
+
+            SetEOF(ackRef, 0);
+            FSWrite(ackRef, &wrote, line);
+        }
+        FSClose(ackRef);
+    }
+}
+
 void Remote_Ack(const char *cmd)
 {
     short vRef = ShareVolume();

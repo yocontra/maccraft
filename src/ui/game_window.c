@@ -570,6 +570,19 @@ static void CentreOnPlayer(void)
         short dx = (short)(wantX - sCamX);
         short dy = (short)(wantY - sCamY);
 
+        /* Dead zone: follow only when the player nears the edge of the view.
+         * Panning on every step repainted the whole play area for a one-pixel
+         * shift, which is what made walking crawl; inside the dead zone a step
+         * moves nothing but the figure. */
+        {
+            short marginX = (short)((sDisplayRect.right - sDisplayRect.left) / 5);
+            short marginY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 5);
+
+            if (dx > -marginX && dx < marginX && dy > -marginY && dy < marginY) {
+                return;
+            }
+        }
+
         /* Follow at half speed, with a floor of one pixel so the camera always
          * converges: snapping the camera to the player each tick made every step
          * a jump-cut, and the scroll optimisation turns this into a smooth pan
