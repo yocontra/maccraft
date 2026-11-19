@@ -64,18 +64,22 @@ static short ShareVolume(void)
  * Remote_Take because the decision is made after the read returns, and a receipt
  * written before it would describe the previous command. */
 /* Write a stats line into the receipt: paint ticks, paint count, physics steps. */
+/* Defined by the game window: total pixels the world pass has covered. */
+extern long Sprite_PaintedPixels;
+
 void Remote_ReportStats(long paintTicks, long paints, long steps)
 {
     char line[80];
     short i = 0;
-    long values[3];
+    long values[4];
     short v;
 
     values[0] = paintTicks;
     values[1] = paints;
     values[2] = steps;
+    values[3] = Sprite_PaintedPixels;
 
-    for (v = 0; v < 3; v++) {
+    for (v = 0; v < 4; v++) {
         char digits[12];
         short n = 0;
         long value = values[v];
@@ -90,7 +94,7 @@ void Remote_ReportStats(long paintTicks, long paints, long steps)
         while (n > 0 && i < (short)sizeof(line) - 2) {
             line[i++] = digits[--n];
         }
-        line[i++] = (v == 2) ? '\n' : ' ';
+        line[i++] = (v == 3) ? '\n' : ' ';
     }
 
     sResult[0] = '\0';

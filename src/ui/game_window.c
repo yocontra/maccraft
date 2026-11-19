@@ -68,6 +68,10 @@ static Boolean sWorldDirty = false;
 
 /* Harness counters: where the seconds actually go. */
 long Sprite_Work[6];
+/* Pixels the world pass covered in total: mean repaint area per frame is this
+ * divided by Sprite_Work[3], and it is what tells a small hover box from a full
+ * frame without guessing. */
+long Sprite_PaintedPixels;
 static unsigned long sLastSaveTick = 0;
 static short sWalkPhase = 0;
 
@@ -101,6 +105,12 @@ static short sBlockType = 0;
  * GameWindow_Idle turns it into an InvalRect, so painting only ever happens
  * inside a BeginUpdate/EndUpdate pass. */
 static Boolean sDirty = false;
+/* The status strip is redrawn directly from the idle loop instead of through an
+ * invalidation. Every InvalRect lands in the same update region, and the region's
+ * bounding box is what the paint uses -- so invalidating the strip together with
+ * a selection box over the island made the world repaint from the top of the view
+ * down to the pointer, on every move between tiles. */
+static Boolean sStripDirty = false;
 static Rect sDirtyRect;
 
 /* Intersection of the display rect with the current update region's bounds,
@@ -457,6 +467,9 @@ static void ApplyRemoteCommand(const char *cmd)
         /* Only reached when the launch failed. */
         Remote_SetResult("launch failed");
     }
+    else if (strncmp(cmd, "stats", 5) == 0) {
+        Remote_ReportStats(Sprite_Work[2], Sprite_Work[3], Sprite_Work[5]);
+    }
     else if (strncmp(cmd, "save", 4) == 0) {
         Remote_SetResult("save");
         GameWindow_SaveWorld();
@@ -736,7 +749,10 @@ static void UpdateHover(void)
         SelectionBoxRect(sHoverX, sHoverY, sHoverZ, &now);
         MarkDirty(&now);
     }
-    MarkDirty(&sTitleStripRect);
+
+    /* The readout follows the pointer, but it is repainted outside the update
+     * region: see sStripDirty. */
+    sStripDirty = true;
 }
 
 /* The selection box: Minecraft's black wireframe on the block you are looking
@@ -1120,6 +1136,10 @@ static void GameWindow_Render(void)
             sRenderRect = exposed;
         }
     }
+
+    Sprite_PaintedPixels +=
+        (long)(sRenderRect.right - sRenderRect.left) *
+        (long)(sRenderRect.bottom - sRenderRect.top);
 
     if (sHasColor && Sprite_Ready()) {
         /* Minecraft's sky: one flat blue with flat white clouds, painted through
@@ -1729,6 +1749,22 @@ void GameWindow_Idle(void)
 
         HeldBlockRect(&swingRect);
         MarkDirty(&swingRect);
+    }
+
+    if (sStripDirty) {
+        GrafPtr saved;
+
+        sStripDirty = false;
+        GetPort(&saved);
+        SetPort(sWindow);
+        Sprite_BeginFrame();
+        Sprite_SetView(&sTitleStripRect);
+        HUD_DrawStrip(HoveredBlock(), (BlockID)(sBlockType + 1),
+                      sHoverValid ? sHoverX : (short)(sPlayer.x >> 16),
+                      sHoverValid ? sHoverY : (short)(sPlayer.y >> 16));
+        Sprite_SetView(&sDisplayRect);
+        Sprite_EndFrame();
+        SetPort(saved);
     }
 
     FlushDirty();
