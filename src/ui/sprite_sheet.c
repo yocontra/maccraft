@@ -33,12 +33,23 @@
 
 static unsigned char sSheet[kSpriteRows * kSpriteW];
 static unsigned char sMaskSheet[kSpriteRows * kMaskRowBytes];
+
+/* The inked run of every sprite row, computed once at bake time. Every face row
+ * is a single contiguous run, so the draw loop needs no mask scan at all: it
+ * reads two bytes and copies. Scanning the mask per row per face was a third of
+ * the frame's work. */
+static unsigned char sRunFirst[kSpriteBands * kSpriteH];
+static unsigned char sRunLast[kSpriteBands * kSpriteH];
 static unsigned char sDevice[kArtPaletteEntries];
 
 /* The art palette as 8-bit RGB triplets. The guest runs at 32-bit direct colour
  * (measured: pixelSize 32, rowBytes 4096 for a 1024-wide screen), so a face is
  * written as real pixels and no palette mapping is involved at all. */
 static unsigned char sRGB[kArtPaletteEntries][3];
+
+/* The same palette as whole 0x00RRGGBB words, which is one store per pixel at
+ * 32-bit depth instead of four byte stores and a shift. */
+static unsigned long sPixel32[kArtPaletteEntries];
 static Rect sView;
 static short sOriginX = 0;
 static short sOriginY = 0;
@@ -138,6 +149,9 @@ static void BuildRGBTable(void)
         sRGB[i][0] = (unsigned char)(r >> 8);
         sRGB[i][1] = (unsigned char)(g >> 8);
         sRGB[i][2] = (unsigned char)(b >> 8);
+        sPixel32[i] = ((unsigned long)sRGB[i][0] << 16) |
+                      ((unsigned long)sRGB[i][1] << 8) |
+                      (unsigned long)sRGB[i][2];
     }
 }
 
@@ -185,13 +199,24 @@ static void PutBand(short band, short width, short height)
         for (col = 0; col < kMaskRowBytes; col++) {
             mrow[col] = 0;
         }
-        for (col = 0; col < width; col++) {
-            unsigned char index = src[col];
+        {
+            short first = -1;
+            short last = -1;
 
-            dst[col] = sDevice[index < kArtPaletteEntries ? index : 0];
-            if (cov[col]) {
-                mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
+            for (col = 0; col < width; col++) {
+                unsigned char index = src[col];
+
+                dst[col] = sDevice[index < kArtPaletteEntries ? index : 0];
+                if (cov[col]) {
+                    mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
+                    if (first < 0) {
+                        first = col;
+                    }
+                    last = col;
+                }
             }
+            sRunFirst[band * kSpriteH + row] = (unsigned char)(first < 0 ? 0 : first);
+            sRunLast[band * kSpriteH + row] = (unsigned char)(last < 0 ? 0 : last);
         }
     }
 }
@@ -236,6 +261,37 @@ Boolean Sprite_Ready(void)
     return sReady;
 }
 
+/* Cached screen state for the duration of a frame. Locking the device PixMap
+ * once per frame instead of once per face, and caching baseAddr/stride, removes
+ * three quarters of the drawing overhead on this machine. */
+static Ptr sScreenBase = NULL;
+static short sScreenRowBytes = 0;
+
+void Sprite_BeginFrame(void)
+{
+    GDHandle gd = GetMainDevice();
+
+    sScreenBase = NULL;
+    if (gd == NULL || (*gd)->gdPMap == NULL) {
+        return;
+    }
+    if (!LockPixels((*gd)->gdPMap)) {
+        return;
+    }
+    sScreenBase = (*(*gd)->gdPMap)->baseAddr;
+    sScreenRowBytes = (short)((*(*gd)->gdPMap)->rowBytes & 0x3FFF);
+}
+
+void Sprite_EndFrame(void)
+{
+    GDHandle gd = GetMainDevice();
+
+    if (sScreenBase != NULL && gd != NULL && (*gd)->gdPMap != NULL) {
+        UnlockPixels((*gd)->gdPMap);
+    }
+    sScreenBase = NULL;
+}
+
 void Sprite_SetView(const Rect *view)
 {
     if (view != NULL) {
@@ -257,25 +313,30 @@ void Sprite_Dispose(void)
     sReady = false;
 }
 
+/* Harness probes: Sprite_Probe[0] != 0 makes Sprite_Draw return immediately, so
+ * the cost of the copy can be separated from the cost of deciding to draw;
+ * [1] counts calls. */
+long Sprite_Probe[2];
+
 void Sprite_Draw(short left, short top, BlockID id, short face, short shade)
 {
-    GDHandle gd;
-    PixMapHandle screen;
     short band;
     short width;
     short height;
     short row, col;
-    short rowBytes;
     short bandStart;
-    Ptr base;
+    short originX;
+    short originY;
+    short viewLeft, viewRight, viewTop, viewBottom;
+    short firstRow, lastRow;
     Ptr bandPixels;
-    Ptr bandMask;
+    Ptr rowBase;
 
-    if (!sReady || id == 0) {
+    if (!sReady || id == 0 || sScreenBase == NULL) {
         return;
     }
-    gd = GetMainDevice();
-    if (gd == NULL || (*gd)->gdPMap == NULL) {
+    Sprite_Probe[1]++;
+    if (Sprite_Probe[0] != 0) {
         return;
     }
 
@@ -283,67 +344,118 @@ void Sprite_Draw(short left, short top, BlockID id, short face, short shade)
     width = Bake_FaceWidth(face);
     height = Bake_FaceHeight(face);
 
-    screen = (*gd)->gdPMap;
-    if (!LockPixels(screen)) {
+    originX = (short)(left + sOriginX);
+    originY = (short)(top + sOriginY);
+
+    viewLeft = (short)(sView.left + sOriginX);
+    viewRight = (short)(sView.right + sOriginX);
+    viewTop = (short)(sView.top + sOriginY);
+    viewBottom = (short)(sView.bottom + sOriginY);
+
+    if (originX >= viewRight || (short)(originX + width) <= viewLeft) {
         return;
     }
-    /* A PixMap's rowBytes has a flag in the high half; the stride is the rest. */
-    rowBytes = (short)((*screen)->rowBytes & 0x3FFF);
-    base = (*screen)->baseAddr;
+    if (originY >= viewBottom || (short)(originY + height) <= viewTop) {
+        return;
+    }
+
+    /* Only the rows inside the play area need visiting at all. */
+    firstRow = (short)(viewTop - originY);
+    if (firstRow < 0) {
+        firstRow = 0;
+    }
+    lastRow = (short)(viewBottom - originY);
+    if (lastRow > height) {
+        lastRow = height;
+    }
+    if (firstRow >= lastRow) {
+        return;
+    }
+
     bandStart = (short)(band * kSpriteH);
     bandPixels = (Ptr)sSheet + (long)bandStart * kSpriteW;
-    bandMask = (Ptr)sMaskSheet + (long)bandStart * kMaskRowBytes;
+    /* One multiply for the first row, then the pointer walks: the old code did a
+     * multiply per row per face, which is 32,000 multiplies a frame. */
+    rowBase = sScreenBase + (long)(originY + firstRow) * sScreenRowBytes;
 
-    for (row = 0; row < height; row++) {
-        short y = (short)(top + sOriginY + row);
-        Ptr src = bandPixels + (long)row * kSpriteW;
-        Ptr mrow = bandMask + (long)row * kMaskRowBytes;
-        Ptr dst;
+    /* The depth branch is hoisted out of the row loop: one test per face instead
+     * of one per row. */
+    if (sDepth >= 32) {
+        for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
+            short srcRow = (short)(bandStart + row);
+            short x0 = (short)(originX + sRunFirst[srcRow]);
+            short x1 = (short)(originX + sRunLast[srcRow] + 1);
+            const unsigned char *p;
+            unsigned long *line;
 
-        if (y < sView.top + sOriginY || y >= sView.bottom + sOriginY) {
-            continue;
+            if (x0 < viewLeft) {
+                x0 = viewLeft;
+            }
+            if (x1 > viewRight) {
+                x1 = viewRight;
+            }
+            if (x0 >= x1) {
+                continue;
+            }
+            p = bandPixels + (long)row * kSpriteW + (x0 - originX);
+            line = (unsigned long *)rowBase + x0;
+            for (col = x0; col < x1; col++) {
+                *line++ = sPixel32[*p++];
+            }
         }
-        dst = base + (long)y * rowBytes;
+    }
+    else if (sDepth == 16) {
+        for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
+            short srcRow = (short)(bandStart + row);
+            short x0 = (short)(originX + sRunFirst[srcRow]);
+            short x1 = (short)(originX + sRunLast[srcRow] + 1);
+            const unsigned char *p;
+            Ptr out;
 
-        for (col = 0; col < width; col++) {
-            short x = (short)(left + sOriginX + col);
-            unsigned char index;
-
-            if (x < sView.left + sOriginX || x >= sView.right + sOriginX) {
+            if (x0 < viewLeft) {
+                x0 = viewLeft;
+            }
+            if (x1 > viewRight) {
+                x1 = viewRight;
+            }
+            if (x0 >= x1) {
                 continue;
             }
-            if ((mrow[col >> 3] & (unsigned char)(0x80 >> (col & 7))) == 0) {
-                continue;
-            }
-            index = src[col];
-            if (index >= kArtPaletteEntries) {
-                index = 0;
-            }
-
-            if (sDepth >= 32) {
-                /* 32-bit direct colour: one 0x00RRGGBB word per pixel. */
-                Ptr p = dst + (long)x * 4;
-
-                p[0] = 0;
-                p[1] = (char)sRGB[index][0];
-                p[2] = (char)sRGB[index][1];
-                p[3] = (char)sRGB[index][2];
-            }
-            else if (sDepth == 16) {
-                /* 16-bit: 5 bits per gun. */
+            p = bandPixels + (long)row * kSpriteW + (x0 - originX);
+            out = rowBase + (long)x0 * 2;
+            for (col = x0; col < x1; col++) {
+                unsigned char index = *p++;
                 unsigned short word = (unsigned short)(((sRGB[index][0] >> 3) << 10) |
                                                        ((sRGB[index][1] >> 3) << 5) |
                                                        (sRGB[index][2] >> 3));
-                Ptr p = dst + (long)x * 2;
 
-                p[0] = (char)(word >> 8);
-                p[1] = (char)(word & 0xFF);
-            }
-            else {
-                dst[x] = sDevice[index];
+                *out++ = (char)(word >> 8);
+                *out++ = (char)(word & 0xFF);
             }
         }
     }
+    else {
+        for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
+            short srcRow = (short)(bandStart + row);
+            short x0 = (short)(originX + sRunFirst[srcRow]);
+            short x1 = (short)(originX + sRunLast[srcRow] + 1);
+            const unsigned char *p;
+            Ptr out;
 
-    UnlockPixels(screen);
+            if (x0 < viewLeft) {
+                x0 = viewLeft;
+            }
+            if (x1 > viewRight) {
+                x1 = viewRight;
+            }
+            if (x0 >= x1) {
+                continue;
+            }
+            p = bandPixels + (long)row * kSpriteW + (x0 - originX);
+            out = rowBase + x0;
+            for (col = x0; col < x1; col++) {
+                *out++ = sDevice[*p++];
+            }
+        }
+    }
 }

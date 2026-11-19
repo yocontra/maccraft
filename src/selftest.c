@@ -183,6 +183,19 @@ void SelfTest_Run(void)
     Pump(60);
 
     LogLine("game_visible=", NULL, (long)GameWindow_IsVisible(), true);
+    {
+        short blocks = 0;
+        unsigned long ticks = GameWindow_TimeRender(10, &blocks);
+
+        extern long Sprite_Timing[4];
+
+        LogLine("render_ticks_10=", NULL, (long)ticks, true);
+        LogLine("sky_ticks_10=", NULL, Sprite_Timing[0], true);
+        LogLine("world_ticks_10=", NULL, Sprite_Timing[1], true);
+        LogLine("draw_ticks_10=", NULL, Sprite_Timing[2], true);
+        LogLine("nodraw_ticks_10=", NULL, Sprite_Timing[1], true);
+        (void)blocks;
+    }
     GameWindow_StateForTest(&camX, &camY, &blockType);
     LogLine("cam_x=", NULL, camX, true);
     LogLine("cam_y=", NULL, camY, true);

@@ -44,3 +44,20 @@ indexed `GDevice` keeps a `Palette` of `ColorInfo` in `pmTable`, not a
 
 Roughly 110,000 pixel writes for a full repaint (three faces per visible block,
 256 pixels each). The scene repaints only on invalidation, not in the idle loop.
+
+## Render cost, measured on the emulated guest
+
+Ticks are 1/60 s, ten full repaints of the play area, measured through
+`src/selftest.c` so the numbers come from the machine rather than from a guess:
+
+| Version | Ticks per frame | Change |
+|---|---|---|
+| first textured build | 66.8 | — |
+| walk columns, light only visible faces | 27.2 | 2.5x |
+| hoist the depth branch, walk the row pointer | 25.3 | 2.6x total |
+
+The split at that point: 25.3 ticks of drawing against 4.8 ticks of traversal
+and lighting, so 83% of a frame is the pixel copy. Getting further means writing
+fewer pixels -- a screen-space cache of the last frame, or 32-bit preconverted
+sprite bands (which cost 344 KB of static data) -- not more micro-optimisation of
+the loop that is already one load, one table lookup and one store per pixel.

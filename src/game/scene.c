@@ -425,18 +425,24 @@ static void BuildHut(void)
 
     /* Window in the +x wall, at eye height on a raised hut. */
     World_Set(kHutX1, 23, 5, kBlockGlass);
+    World_Set(kHutX0, 23, 5, kBlockGlass);
 
-    /* Roof: one cell of overhang on all four sides, plus a ridge beam. */
-    for (x = kHutX0 - 1; x <= kHutX1 + 1; x++)
-        for (y = kHutY0 - 1; y <= kHutY1 + 1; y++)
-            World_Set(x, y, kHutRoofZ, kBlockPlanks);
-
+    /* Roof: gabled inside the footprint, not a slab with a bump on it. The
+     * eaves sit exactly at wall-top height so the plank wall below them stays
+     * visible from the camera, and the ridge is one course higher along y=23.
+     * The world is 8 levels tall (z 0..7) and the floor is at 3, so two courses
+     * of roof are all the height there is. */
+    for (x = kHutX0; x <= kHutX1; x++) {
+        World_Set(x, kHutY0, kHutRoofZ, kBlockPlanks);
+        World_Set(x, kHutY1, kHutRoofZ, kBlockPlanks);
+    }
     for (x = kHutX0; x <= kHutX1; x++)
-        World_Set(x, 23, kHutRoofZ + 1, kBlockPlanks);
+        World_Set(x, 23, (short)(kHutRoofZ + 1), kBlockPlanks);
 
-    /* Chimney through the back roof slope, one block proud of the ridge. */
+    /* Chimney through the back roof slope, proud of the ridge so it reads. */
     World_Set(25, kHutY0, kHutRoofZ, kBlockBrick);
-    World_Set(25, kHutY0, kHutRoofZ + 1, kBlockBrick);
+    World_Set(25, kHutY0, (short)(kHutRoofZ + 1), kBlockBrick);
+    World_Set(25, 23, (short)(kHutRoofZ + 1), kBlockBrick);
 }
 
 static void MirrorOffset(short variant, int *dx, int *dy)

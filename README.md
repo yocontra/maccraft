@@ -41,6 +41,8 @@ material rather than as a flat wash.
 
 Every block face carries a hand-authored 16x16 texture, sheared onto its
 isometric quad and shaded one step per face direction, drawn in direct colour.
+A full repaint of the play area costs 25 ticks (0.42 s) on the emulated guest,
+down from 67 ticks; the profile and the hill-climb are in `docs/textures.md`.
 See `docs/textures.md` for how the pixel pipeline works and the two QuickDraw
 facts it rests on.
 

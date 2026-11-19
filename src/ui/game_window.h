@@ -21,6 +21,9 @@ void GameWindow_Show(Boolean visible);
 /* Determine if the window is visible */
 Boolean GameWindow_IsVisible(void);
 
+/* Harness hook: repaint `iterations` times, return elapsed ticks. */
+unsigned long GameWindow_TimeRender(short iterations, short *outBlocks);
+
 /* Perform idle processing */
 void GameWindow_Idle(void);
 

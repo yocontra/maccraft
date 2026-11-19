@@ -10,6 +10,10 @@
 #define kSpriteShades 4
 
 Boolean Sprite_Init(void);
+
+/* Lock the screen for a frame's worth of Sprite_Draw calls, and release it. */
+void Sprite_BeginFrame(void);
+void Sprite_EndFrame(void);
 void Sprite_Dispose(void);
 Boolean Sprite_Ready(void);
 

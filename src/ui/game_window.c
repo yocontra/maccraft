@@ -440,15 +440,10 @@ static void DrawBlock(short x, short y, short z, BlockID id)
     sy += sDisplayRect.top;
 
 
-    /* One light factor per face: the sun's angle multiplied by however much of
-     * the face is buried. Three neighbour lookups per block, no drawing cost. */
-    short topShade   = Light_Combine(Light_FaceFactor(kLightFaceTop),
-                                     Light_Occlusion(x, y, z, kLightFaceTop));
-    short leftShade  = Light_Combine(Light_FaceFactor(kLightFaceLeft),
-                                     Light_Occlusion(x, y, z, kLightFaceLeft));
-    short rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight),
-                                     Light_Occlusion(x, y, z, kLightFaceRight));
-    short topVariation = Block_Variation(x, y, z);
+    short topShade   = 256;
+    short leftShade  = 256;
+    short rightShade = 256;
+    short topVariation = 0;
 
     /* Cull the faces that are buried. Without this every block paints three
      * faces, so the interior of a hill is a mass of hidden quads drawn under
@@ -462,6 +457,27 @@ static void DrawBlock(short x, short y, short z, BlockID id)
     Boolean showTop   = World_Get(x, y, (short)(z + 1)) == 0;
     Boolean showLeft  = World_Get(x, (short)(y + 1), z) == 0;
     Boolean showRight = World_Get((short)(x + 1), y, z) == 0;
+
+    /* A block with every face buried needs no lighting and no drawing. Most of
+     * a filled world is like this, and occlusion is five neighbour lookups per
+     * face. */
+    if (!showTop && !showLeft && !showRight) {
+        return;
+    }
+
+    topVariation = Block_Variation(x, y, z);
+    if (showTop) {
+        topShade = Light_Combine(Light_FaceFactor(kLightFaceTop),
+                                 Light_Occlusion(x, y, z, kLightFaceTop));
+    }
+    if (showLeft) {
+        leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft),
+                                  Light_Occlusion(x, y, z, kLightFaceLeft));
+    }
+    if (showRight) {
+        rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight),
+                                   Light_Occlusion(x, y, z, kLightFaceRight));
+    }
 
     if (Sprite_Ready()) {
         /* Textured path: three baked, pre-shaded faces per block. The sprite
@@ -592,21 +608,25 @@ static void ComputeVisibleRange(Rect *view, short *xMin, short *yMin, short *xMa
 /* Draw the world, bottom z level first, back-to-front inside each level. */
 static void DrawWorld(Rect *view)
 {
-    short xMin, yMin, xMax, yMax, z, sum, x, y, sumMax;
-    BlockID id;
+    short xMin, yMin, xMax, yMax, sum, x, y, sumMax, z, top;
 
     ComputeVisibleRange(view, &xMin, &yMin, &xMax, &yMax);
-    sumMax = xMax + yMax;
+    sumMax = (short)(xMax + yMax);
 
-    for (z = 0; z < kWorldZ; z++) {
-        for (sum = xMin + yMin; sum <= sumMax; sum++) {
-            for (x = xMin; x <= xMax; x++) {
-                y = sum - x;
-                if (y < yMin || y > yMax) {
-                    continue;
-                }
+    /* Painter order: far columns first, bottom to top within a column. Walking a
+     * column at a time costs one TopZ lookup per column and nothing at all for
+     * the empty ones outside the island; the old shape walked all 48x48x8 cells
+     * with a bounds-checked World_Get for each. */
+    for (sum = (short)(xMin + yMin); sum <= sumMax; sum++) {
+        for (x = xMin; x <= xMax; x++) {
+            y = (short)(sum - x);
+            if (y < yMin || y > yMax) {
+                continue;
+            }
+            top = World_TopZ(x, y);
+            for (z = 0; z <= top; z++) {
+                BlockID id = World_Get(x, y, z);
 
-                id = World_Get(x, y, z);
                 if (id != 0) {
                     DrawBlock(x, y, z, id);
                 }
@@ -988,7 +1008,9 @@ static void GameWindow_Render(void)
     /* World blocks (nothing to do when only the selector strip was dirty) */
 
     if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
+        Sprite_BeginFrame();
         DrawWorld(&sRenderRect);
+        Sprite_EndFrame();
 
         /* Selection box on whatever sits under the middle of the view. */
         {
@@ -1148,6 +1170,68 @@ WindowRef GameWindow_GetWindowRef(void)
 }
 
 /* Determine if the window is visible */
+/* Repaint the play area `iterations` times and report how long each phase took,
+ * so render cost can be hill-climbed from the harness instead of guessed at.
+ * Ticks are 1/60 s. */
+long Sprite_Timing[4];
+extern long Sprite_Probe[2];
+
+unsigned long GameWindow_TimeRender(short iterations, short *outBlocks)
+{
+    unsigned long tick;
+    short i;
+
+    Sprite_Timing[0] = 0;
+    Sprite_Timing[1] = 0;
+    if (outBlocks != NULL) {
+        *outBlocks = 0;
+    }
+    if (!sInitialized || sWindow == NULL) {
+        return 0;
+    }
+
+    SetPort(sWindow);
+    for (i = 0; i < iterations; i++) {
+        BeginUpdate(sWindow);
+        sRenderRect = sDisplayRect;
+        DetectColor();
+
+        tick = (unsigned long)TickCount();
+        Sky_Draw(sWindow, sDisplayRect, sHasColor, 0);
+        Sprite_Timing[0] += (long)((unsigned long)TickCount() - tick);
+
+        tick = (unsigned long)TickCount();
+        Sprite_BeginFrame();
+        DrawWorld(&sDisplayRect);
+        Sprite_EndFrame();
+        Sprite_Timing[1] += (long)((unsigned long)TickCount() - tick);
+
+        EndUpdate(sWindow);
+    }
+
+    /* Second pass with the copy switched off: the difference is what the pixel
+     * writes cost, the remainder is the traversal and the lighting. */
+    Sprite_Timing[2] = Sprite_Timing[1];
+    Sprite_Timing[1] = 0;
+    Sprite_Probe[0] = 1;
+    for (i = 0; i < iterations; i++) {
+        BeginUpdate(sWindow);
+        tick = (unsigned long)TickCount();
+        Sprite_BeginFrame();
+        DrawWorld(&sDisplayRect);
+        Sprite_EndFrame();
+        Sprite_Timing[1] += (long)((unsigned long)TickCount() - tick);
+        EndUpdate(sWindow);
+    }
+    Sprite_Probe[0] = 0;
+
+    if (outBlocks != NULL) {
+        *outBlocks = World_Height(24, 24);
+    }
+    Sprite_Timing[3] = Sprite_Timing[1];
+    return (unsigned long)(Sprite_Timing[0] + Sprite_Timing[2]);
+}
+
 Boolean GameWindow_IsVisible(void)
 {
     if (!sInitialized || sWindow == NULL) {
