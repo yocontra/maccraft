@@ -9,7 +9,8 @@
 #include "world.h"
 
 #define kEmptyBlock 0
-#define kGrassBlock 3
+#define kGrassBlock 1  /* id 1 is grass; id 3 is stone in the block palette */
+#define kDirtBlock  2
 
 #define kPlateauMin 18
 #define kPlateauMax 29
@@ -33,11 +34,12 @@ void World_Reset(void)
             for (z = 0; z < kWorldZ; z++)
                 sBlocks[x][y][z] = kEmptyBlock;
 
-    /* Flat 12x12 grass plateau centred on (24,24), two blocks tall. */
+    /* Flat 12x12 plateau centred on (24,24), two blocks tall: grass on top with
+     * dirt beneath, so a cut edge shows soil instead of more grass. */
     for (x = kPlateauMin; x <= kPlateauMax; x++)
         for (y = kPlateauMin; y <= kPlateauMax; y++)
             for (z = 0; z <= kPlateauTop; z++)
-                sBlocks[x][y][z] = kGrassBlock;
+                sBlocks[x][y][z] = (z == kPlateauTop) ? kGrassBlock : kDirtBlock;
 }
 
 BlockID World_Get(short x, short y, short z)

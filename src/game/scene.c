@@ -97,9 +97,11 @@ static Boolean InPlateau(short x, short y)
 {
     int dx = AbsInt((int)x - kPlateauCX);
     int dy = AbsInt((int)y - kPlateauCY);
+    int wobble = (((int)x * 3 + (int)y * 5) % 5) - 2;
 
-    /* 10 x 8 ellipse: a rounded mound rather than a rectangular terrace. */
-    return (Boolean)(dx * dx * 64 + dy * dy * 100 <= 6400);
+    /* 10 x 8 ellipse: a rounded mound rather than a rectangular terrace.
+     * The small wobble keeps its rim from reading as a drawn oval. */
+    return (Boolean)(dx * dx * 64 + dy * dy * 100 <= 6400 + wobble * 160);
 }
 
 /* 0 when the cell is not part of the ridge, otherwise its surface height.
@@ -109,7 +111,8 @@ static short RidgeHeight(short x, short y)
 {
     int dx = AbsInt((int)x - kRidgeCX);
     int dy = AbsInt((int)y - kRidgeCY);
-    int d = dx * 2 + dy * 3;
+    int wobble = (((int)x * 7 + (int)y * 5) % 5) - 2;
+    int d = dx * 2 + dy * 3 + wobble;
 
     if (d <= 3)
         return 6;
@@ -125,7 +128,7 @@ static short RidgeHeight(short x, short y)
 static Boolean IsSnowCap(short x, short y)
 {
     return (Boolean)((x == kRidgeCX && y == kRidgeCY) ||
-                     (x == kRidgeCX + 1 && y == kRidgeCY + 1));
+                     (x == kRidgeCX && y == kRidgeCY + 1));
 }
 
 /* Land surface height, or -1 for open water.  The ridge wins over the

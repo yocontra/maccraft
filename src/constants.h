@@ -104,7 +104,7 @@ enum {
 /* Game view constants. Block ids are 1-based (0 = empty): the selected swatch
  * index sBlockType maps to block id sBlockType + 1. */
 enum {
-    kGameNumBlockTypes      = 3,
+    kGameNumBlockTypes      = 14,
     kGameBlockSwatchSize    = 24,
     kGameBlockSwatchSpacing = 12,
     kGameCameraPanX         = 16, /* one iso tile step horizontally */

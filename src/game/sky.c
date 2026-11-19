@@ -206,6 +206,7 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
     GrafPtr savedPort;
     PenState savedPen;
     Pattern pat;
+    Pattern fillPat;
     Rect band;
     Rect line;
     RGBColor color;
@@ -218,7 +219,7 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
     if (r.bottom <= r.top || r.right <= r.left)
         return;
 
-    savedPort = GetPort();
+    GetPort(&savedPort);
     if (port != 0)
         SetPort(port);
 
@@ -230,6 +231,7 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
      * only the foreground colour changes; on 1-bit, only the pattern changes. */
     if (hasColor)
         PenPat(&kSolidPattern);
+    fillPat = kSolidPattern;
 
     for (i = 0; i < kSkyBands; i++) {
         band.top = (short)(r.top + (height * (long)i) / kSkyBands);
@@ -249,8 +251,9 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
         } else {
             PatternForDensity(Sky_BandDensity(i, kSkyBands), &pat);
             PenPat(&pat);
+            fillPat = pat;
         }
-        FillRect(&band);
+        FillRect(&band, &fillPat);
     }
 
     /* Soft horizon: two pale rows at the bottom of the sky. */
@@ -266,8 +269,9 @@ void Sky_Draw(GrafPtr port, Rect r, Boolean hasColor, long ticks)
             RGBForeColor(&kHorizonColor);
         } else {
             PenPat(&kClearPattern);
+            fillPat = kClearPattern;
         }
-        FillRect(&line);
+        FillRect(&line, &fillPat);
     }
 
     /* Clouds: the field repeats every kSkyCloudPeriod pixels; shift moves it,

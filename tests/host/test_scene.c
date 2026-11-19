@@ -105,6 +105,12 @@ static void TestMaterialsAndBounds(void)
     CHECK(counts[kBlockPlanks] > 0);
     CHECK(counts[kBlockBedrock] > 0);
 
+    /* The sea floor and land share a continuous bedrock layer, so no camera
+     * position can look through the world. */
+    for (x = 0; x < kWorldX; x++)
+        for (y = 0; y < kWorldY; y++)
+            CHECK(World_Get(x, y, 0) == kBlockBedrock);
+
     /* The accessors clamp out-of-range reads; the builder must not have
      * relied on that for its shape.  The island is inside open water, so no
      * border column rises above the sea. */

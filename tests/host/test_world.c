@@ -45,13 +45,13 @@ static void TestPlateau(void)
 {
     World_Reset();
 
-    /* Plateau columns: x,y in 18..29, grass at z 0..1. */
-    CHECK(World_Get(24, 24, 0) == 3);
-    CHECK(World_Get(24, 24, 1) == 3);
-    CHECK(World_Get(18, 18, 0) == 3);
-    CHECK(World_Get(29, 29, 1) == 3);
-    CHECK(World_Get(29, 18, 0) == 3);
-    CHECK(World_Get(18, 29, 1) == 3);
+    /* Plateau columns: x,y in 18..29, dirt under grass (ids 2 and 1). */
+    CHECK(World_Get(24, 24, 0) == 2);
+    CHECK(World_Get(24, 24, 1) == 1);
+    CHECK(World_Get(18, 18, 0) == 2);
+    CHECK(World_Get(29, 29, 1) == 1);
+    CHECK(World_Get(29, 18, 0) == 2);
+    CHECK(World_Get(18, 29, 1) == 1);
 
     /* Plateau is exactly two blocks tall and nothing above. */
     CHECK(World_Get(24, 24, 2) == 0);
@@ -126,7 +126,7 @@ static void TestResetClearsEdits(void)
 
     World_Reset();
     CHECK(World_Get(0, 0, 0) == 0);
-    CHECK(World_Get(24, 24, 1) == 3);
+    CHECK(World_Get(24, 24, 1) == 1);
 }
 
 int main(void)

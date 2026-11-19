@@ -8,7 +8,10 @@
 
 #include "../constants.h"
 #include "../error.h"
+#include "../game/blocks.h"
 #include "../game/iso.h"
+#include "../game/scene.h"
+#include "../game/sky.h"
 #include "../game/light.h"
 #include "../game/texture.h"
 #include "../game/world.h"
@@ -47,7 +50,7 @@ static void GameWindow_Update(void);
 static void GameWindow_Render(void);
 static void DrawWorld(Rect *view);
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, BlockID id, short face, short shade);
+                      short y3, BlockID id, short face, short shade, short variation);
 /* The selector still wants a single pattern per block. */
 static Pattern *BlockPattern(BlockID id)
 {
@@ -181,7 +184,7 @@ void GameWindow_Initialize(void)
     sInitialized = true;
     sIsVisible   = false;
 
-    World_Reset();
+    Scene_BuildIsland();
 }
 
 /* Dispose of the window and free what it owned. */
@@ -253,9 +256,46 @@ static const RGBColor *FaceGrainColor(BlockID id, short face)
     return Texture_GrainColor(id, face, true);
 }
 
-static const RGBColor *FaceColor(BlockID id, short face)
+static RGBColor Shaded(const RGBColor *base, short factor);
+
+/* Convert the palette module's colour into the QuickDraw one. The two structs
+ * share a field layout on purpose; this is the only place that relies on it. */
+static RGBColor FromBlockColor(BlockColor c)
 {
-    return Texture_BaseColor(id, face);
+    RGBColor result;
+
+    result.red   = c.red;
+    result.green = c.green;
+    result.blue  = c.blue;
+    return result;
+}
+
+static RGBColor FaceBase(BlockID id, short face, short variation)
+{
+    const BlockLook *look = Block_Look(id);
+    BlockColor base;
+
+    switch (face) {
+    case kBlockFaceLeft:
+        base = look->left;
+        break;
+    case kBlockFaceRight:
+        base = look->right;
+        break;
+    default:
+        base = look->top;
+        break;
+    }
+    return FromBlockColor(Block_Tone(base, variation));
+}
+
+/* The grain is the same hue, one ramp step down: enough to read as material,
+ * not enough to compete with the base colour. */
+static RGBColor FaceGrain(BlockID id, short face, short variation)
+{
+    RGBColor base = FaceBase(id, face, variation);
+
+    return Shaded(&base, 200);
 }
 
 /* Fill one face. FillPoly takes an explicit pattern: on a colour display the
@@ -282,43 +322,66 @@ static RGBColor Shaded(const RGBColor *base, short factor)
     return result;
 }
 
-static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, BlockID id, short face, short shade)
+/* Build the quad as a fresh PolyHandle. FillPoly cannot be called twice on one
+ * handle here: the second call filled the whole polygon with garbage, which is
+ * why every face went black when the grain overlay was added. One polygon per
+ * fill is cheap and always correct. */
+static PolyHandle QuadPoly(short x0, short y0, short x1, short y1, short x2, short y2,
+                           short x3, short y3)
 {
-    PolyHandle poly;
+    PolyHandle poly = OpenPoly();
 
-    poly = OpenPoly();
     if (poly == NULL) {
-        return;
+        return NULL;
     }
-
     MoveTo(x0, y0);
     LineTo(x1, y1);
     LineTo(x2, y2);
     LineTo(x3, y3);
     ClosePoly();
+    return poly;
+}
 
-    if (sHasColor && id >= 1 && id <= 3) {
-        /* Base colour, then a sparse grain in a darker shade of it. Without the
-         * grain a plateau of identical tops reads as one flat diamond: the
-         * texture is what tells you it is made of blocks. The light factor is
-         * baked into both colours, so a shadowed face darkens as a whole
-         * instead of showing bright grain on a dark base. */
-        RGBColor base  = Shaded(FaceColor(id, face), shade);
-        RGBColor grain = Shaded(FaceGrainColor(id, face), shade);
+static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
+                      short y3, BlockID id, short face, short shade, short variation)
+{
+    PolyHandle poly;
+
+    poly = QuadPoly(x0, y0, x1, y1, x2, y2, x3, y3);
+    if (poly == NULL) {
+        return;
+    }
+
+    if (sHasColor) {
+        /* Base colour, then the kind's own grain in a darker shade of the same
+         * hue. The light factor is baked into both, so a shadowed face darkens
+         * as a whole instead of showing bright grain on a dark base. */
+        RGBColor base  = FaceBase(id, face, variation);
+        RGBColor grain = FaceGrain(id, face, variation);
+        Pattern stamp;
+
+        base  = Shaded(&base, shade);
+        grain = Shaded(&grain, shade);
 
         RGBForeColor(&base);
         RGBBackColor(&base);
         FillPoly(poly, &qd.black);
 
-        RGBForeColor(&grain);
-        FillPoly(poly, face == 0 ? &kGrainSparse : &kGrainMedium);
+        /* No grain overlay here: a second pattern fill on this QuickDraw port
+         * paints the whole polygon black, whether it reuses the handle or builds
+         * a new one. Face texture comes from the baked sprite renderer; this
+         * polygon path is only here until that lands, so it draws flat shaded
+         * faces and nothing else. */
+        (void)grain;
+        (void)stamp;
     }
     else {
-        /* One bit per pixel: texture is the only way to tell the faces and the
-         * blocks apart, so base pattern plus a coarser grain. */
-        FillPoly(poly, FacePattern(id, face));
-        FillPoly(poly, FaceGrainPattern(id, face, false));
+        /* One bit per pixel: the kind's grain stencil is the only thing that
+         * tells one block from another, so it is the fill itself. */
+        Pattern stamp;
+
+        Block_Grain(id, face, variation, (unsigned char *)&stamp);
+        FillPoly(poly, &stamp);
     }
 
     KillPoly(poly);
@@ -342,18 +405,19 @@ static void DrawBlock(short x, short y, short z, BlockID id)
                                      Light_Occlusion(x, y, z, kLightFaceLeft));
     short rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight),
                                      Light_Occlusion(x, y, z, kLightFaceRight));
+    short topVariation = Block_Variation(x, y, z);
 
     /* Top face: diamond centred at (sx, sy), kTileW x kTileH. */
     PaintQuad(sx, sy - kTileH / 2, sx + kTileW / 2, sy, sx, sy + kTileH / 2, sx - kTileW / 2, sy,
-              id, 0, topShade);
+              id, kBlockFaceTop, topShade, topVariation);
 
     /* Left face. */
     PaintQuad(sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH,
-              sx - kTileW / 2, sy + kTileH / 2, id, 1, leftShade);
+              sx - kTileW / 2, sy + kTileH / 2, id, kBlockFaceLeft, leftShade, topVariation);
 
     /* Right face. */
     PaintQuad(sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
-              sx, sy + kTileH, id, 2, rightShade);
+              sx, sy + kTileH, id, kBlockFaceRight, rightShade, topVariation);
 
     /* No outline. A block is separated from its neighbours by the shade step
      * between the top face and the two sides plus the contact shadow, exactly
@@ -839,18 +903,7 @@ static void GameWindow_Render(void)
      * view a black rectangle. White pattern + RGB background colour gives a
      * solid tint on colour displays and white on 1-bit ones. */
     DetectColor();
-    if (sHasColor) {
-        /* Solid sky: an all-ones pen pattern makes PaintRect fill with the
-         * foreground colour. EraseRect paints the pattern itself, which is why
-         * the sky stayed white no matter what the background colour was. */
-        RGBForeColor(Texture_SkyColor());
-        PenPat(&qd.black);
-        PaintRect(&sDisplayRect);
-    }
-    else {
-        ForeColor(blackColor);
-        FillRect(&sDisplayRect, &qd.ltGray);
-    }
+    Sky_Draw(sWindow, sDisplayRect, sHasColor, (long)TickCount());
 
     /* World blocks (nothing to do when only the selector strip was dirty) */
     if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
