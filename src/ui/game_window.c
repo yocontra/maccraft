@@ -4,6 +4,7 @@
 #include <Memory.h>
 #include <Quickdraw.h>
 #include <TextUtils.h>
+#include <Processes.h>
 #include <Windows.h>
 
 #include "../constants.h"
@@ -192,6 +193,17 @@ void GameWindow_Initialize(void)
 
     Scene_BuildIsland();
     Sfx_Init();
+
+    /* Take the front. The game is launched from Startup Items, so the Finder
+     * comes forward afterwards and the window would sit inactive: its clicks
+     * would go to the desktop and its menu bar would belong to the Finder. */
+    {
+        ProcessSerialNumber psn;
+
+        if (GetCurrentProcess(&psn) == noErr) {
+            SetFrontProcess(&psn);
+        }
+    }
     Sprite_SetView(&sDisplayRect);
     /* The window sits at windowRect; the sprite layer needs that offset because
      * it writes to screen memory rather than through the port. */
@@ -1417,8 +1429,24 @@ void GameWindow_ToggleBlockType(void)
 /* Perform idle processing: turn a recorded dirty rect into an InvalRect. */
 void GameWindow_Idle(void)
 {
+    static Boolean sFronted = false;
+
     if (!sInitialized || sWindow == NULL || !sIsVisible) {
         return;
+    }
+
+    /* Take the front once, on the first idle pass. Doing it in Initialize loses
+     * the race: a game started from Startup Items runs before the Finder has
+     * finished launching, and the Finder then comes forward over it -- leaving
+     * the window inactive, so its clicks went to the desktop and the menu bar
+     * belonged to the Finder. */
+    if (!sFronted) {
+        ProcessSerialNumber psn;
+
+        sFronted = true;
+        if (GetCurrentProcess(&psn) == noErr) {
+            SetFrontProcess(&psn);
+        }
     }
 
     FlushDirty();
