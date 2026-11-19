@@ -33,6 +33,8 @@ set(SRC_C
     src/ui/window_manager.c
     src/ui/utils.c
     src/ui/hud.c
+    src/ui/world_view.c
+    src/ui/avatar.c
     src/ui/sprite_sheet.c
     src/game/world.c
     src/game/iso.c
@@ -62,6 +64,8 @@ set(HEADER_FILES
     src/ui/window_manager.h
     src/ui/utils.h
     src/ui/hud.h
+    src/ui/world_view.h
+    src/ui/avatar.h
     src/ui/sprite_sheet.h
     src/game/world.h
     src/game/iso.h

@@ -22,6 +22,8 @@
 #include "../game/world.h"
 #include "game_window.h"
 #include "hud.h"
+#include "world_view.h"
+#include "avatar.h"
 #include "sprite_sheet.h"
 #include "utils.h"
 
@@ -313,16 +315,6 @@ static void FlushDirty(void)
 static RGBColor Shaded(const RGBColor *base, short factor);
 
 /* One palette step brighter, clamped: the ink of the face texture. */
-static RGBColor Lightened(const RGBColor *base)
-{
-    RGBColor result;
-    unsigned short bump = 0x1A1A;
-
-    result.red   = (unsigned short)(base->red   > (unsigned short)(0xFFFF - bump) ? 0xFFFF : base->red + bump);
-    result.green = (unsigned short)(base->green > (unsigned short)(0xFFFF - bump) ? 0xFFFF : base->green + bump);
-    result.blue  = (unsigned short)(base->blue  > (unsigned short)(0xFFFF - bump) ? 0xFFFF : base->blue + bump);
-    return result;
-}
 
 /* Convert the palette module's colour into the QuickDraw one. The two structs
  * share a field layout on purpose; this is the only place that relies on it. */
@@ -336,24 +328,6 @@ static RGBColor FromBlockColor(BlockColor c)
     return result;
 }
 
-static RGBColor FaceBase(BlockID id, short face, short variation)
-{
-    const BlockLook *look = Block_Look(id);
-    BlockColor base;
-
-    switch (face) {
-    case kBlockFaceLeft:
-        base = look->left;
-        break;
-    case kBlockFaceRight:
-        base = look->right;
-        break;
-    default:
-        base = look->top;
-        break;
-    }
-    return FromBlockColor(Block_Tone(base, variation));
-}
 
 /* The grain is the same hue, one ramp step down: enough to read as material,
  * not enough to compete with the base colour. */
@@ -365,89 +339,12 @@ static RGBColor FaceBase(BlockID id, short face, short variation)
  * produced the black play area. */
 /* Apply a light factor to a palette colour. The two colour structs have the
  * same field layout on purpose, and this is the only place that relies on it. */
-static RGBColor Shaded(const RGBColor *base, short factor)
-{
-    LightColor in;
-    LightColor out;
-    RGBColor result;
-
-    in.red   = base->red;
-    in.green = base->green;
-    in.blue  = base->blue;
-    out = Light_Shade(in, factor);
-
-    result.red   = out.red;
-    result.green = out.green;
-    result.blue  = out.blue;
-    return result;
-}
 
 /* Build the quad as a fresh PolyHandle. FillPoly cannot be called twice on one
  * handle here: the second call filled the whole polygon with garbage, which is
  * why every face went black when the grain overlay was added. One polygon per
  * fill is cheap and always correct. */
-static PolyHandle QuadPoly(short x0, short y0, short x1, short y1, short x2, short y2,
-                           short x3, short y3)
-{
-    PolyHandle poly = OpenPoly();
 
-    if (poly == NULL) {
-        return NULL;
-    }
-    MoveTo(x0, y0);
-    LineTo(x1, y1);
-    LineTo(x2, y2);
-    LineTo(x3, y3);
-    ClosePoly();
-    return poly;
-}
-
-static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, BlockID id, short face, short shade, short variation)
-{
-    PolyHandle poly;
-
-    poly = QuadPoly(x0, y0, x1, y1, x2, y2, x3, y3);
-    if (poly == NULL) {
-        return;
-    }
-
-    if (sHasColor) {
-        /* One patterned fill, two colours: the kind's grain stencil decides
-         * which pixels take the highlight and which take the base. A second
-         * FillPoly is not an option here -- it blacks the polygon out -- but a
-         * single patterned fill is how the 1-bit path has always textured a
-         * face, and the 0-bits take the background colour.
-         *
-         * Ink is one step brighter than the base with a sparse stencil, so a
-         * face is its own colour with a speckle of highlight, which is
-         * Minecraft's surface noise. Inverting that (ink = base, ground =
-         * darker) made every face read as its own shadow and turned the plateau
-         * almost black. */
-        RGBColor base = Shaded(&(RGBColor){FaceBase(id, face, variation).red,
-                                           FaceBase(id, face, variation).green,
-                                           FaceBase(id, face, variation).blue},
-                               shade);
-        RGBColor highlight;
-        Pattern stamp;
-
-        highlight = Lightened(&base);
-        Block_Grain(id, face, variation, (unsigned char *)&stamp);
-        RGBForeColor(&highlight);
-        RGBBackColor(&base);
-        FillPoly(poly, &stamp);
-    }
-    else {
-        /* One bit per pixel: the kind's grain stencil is the only thing that
-         * tells one block from another, so it is the fill itself. */
-        Pattern stamp;
-
-        Block_Grain(id, face, variation, (unsigned char *)&stamp);
-        FillPoly(poly, &stamp);
-    }
-
-    KillPoly(poly);
-}
 
 /* The rectangle the held block occupies, so the swing can repaint just that
  * instead of the whole display. */
@@ -491,37 +388,6 @@ static void CentreOnPlayer(void)
  * Drawn with the HUD's pixel fills because it has to sit in front of the world
  * and behind the HUD, and because a block-textured avatar at this scale would
  * be one bright pixel. */
-static void DrawPlayer(void)
-{
-    short px = (short)(sPlayer.x >> 16);
-    short py = (short)(sPlayer.y >> 16);
-    short pz = (short)(sPlayer.z >> 16);
-    short sx, sy;
-    Rect r;
-
-    Iso_Project(px, py, pz, sCamX, sCamY, &sx, &sy);
-    sx = (short)(sx + sDisplayRect.left);
-    sy = (short)(sy + sDisplayRect.top);
-
-    /* Nothing to draw when the player is not in the play area, and the figure's
-     * own extent is clamped to it: an off-screen or half-off avatar must not
-     * hand the pixel writer coordinates it has never seen. */
-    if (sx < (short)(sDisplayRect.left - 8) || sx > (short)(sDisplayRect.right + 8)) {
-        return;
-    }
-    if (sy < (short)(sDisplayRect.top - 32) || sy > (short)(sDisplayRect.bottom + 8)) {
-        return;
-    }
-
-    SetRect(&r, (short)(sx - 5), sy, (short)(sx + 6), (short)(sy + 3));
-    Sprite_FillRect(&r, 0x1E3E1EUL);          /* contact shadow */
-    SetRect(&r, (short)(sx - 3), (short)(sy - 10), (short)(sx + 4), sy);
-    Sprite_FillRect(&r, 0x2B3D8CUL);          /* legs */
-    SetRect(&r, (short)(sx - 4), (short)(sy - 20), (short)(sx + 5), (short)(sy - 10));
-    Sprite_FillRect(&r, 0x3D5BD6UL);          /* torso */
-    SetRect(&r, (short)(sx - 3), (short)(sy - 27), (short)(sx + 4), (short)(sy - 20));
-    Sprite_FillRect(&r, 0xE0B088UL);          /* head */
-}
 
 
 /* The cloud slabs, drawn through the pixel path: QuickDraw fills inside the
@@ -684,234 +550,17 @@ static void DrawSelectionBox(short x, short y, short z)
  * Iso_Project(x, y, z, ...) and clipped nowhere (the update region clips). */
 /* The darkest of a face's four corner occlusions: one boxed corner is enough to
  * drop the face a shade, the way Minecraft's smooth lighting reads. */
-static short DarkestCorner(const short corners[kLightCorners])
-{
-    short darkest = 256;
-    short i;
 
-    for (i = 0; i < kLightCorners; i++) {
-        if (corners[i] < darkest) {
-            darkest = corners[i];
-        }
-    }
-    return darkest;
-}
-
-static void DrawBlock(short x, short y, short z, BlockID id)
-{
-    short sx, sy;
-
-    Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
-    sx += sDisplayRect.left;
-    sy += sDisplayRect.top;
-
-
-    short topShade   = 256;
-    short leftShade  = 256;
-    short rightShade = 256;
-    short topVariation = 0;
-
-    /* Cull the faces that are buried. Without this every block paints three
-     * faces, so the interior of a hill is a mass of hidden quads drawn under
-     * the visible ones -- wasted work on a 25 MHz machine and, worse, visible
-     * dark seams wherever the geometry is off by a pixel.
-     *
-     * Which neighbour hides which face follows from the projection:
-     * screenX = (x - y) * 16, screenY = (x + y) * 8, so the block at (x, y + 1)
-     * sits one tile down-left (it hides the left face) and (x + 1, y) one tile
-     * down-right (it hides the right). */
-    Boolean showTop   = World_Get(x, y, (short)(z + 1)) == 0;
-    Boolean showLeft  = World_Get(x, (short)(y + 1), z) == 0;
-    Boolean showRight = World_Get((short)(x + 1), y, z) == 0;
-
-    /* A block with every face buried needs no lighting and no drawing. Most of
-     * a filled world is like this, and occlusion is five neighbour lookups per
-     * face. */
-    if (!showTop && !showLeft && !showRight) {
-        return;
-    }
-
-    topVariation = Block_Variation(x, y, z);
-    /* Occlusion comes from the four corners of the face, not one number for the
-     * whole quad: a face with a boxed corner is darker than an open one, which
-     * is what gives Minecraft its seams where blocks meet. */
-    if (showTop) {
-        short corners[kLightCorners];
-
-        Light_FaceCorners(x, y, z, kLightFaceTop, corners);
-        topShade = Light_Combine(Light_FaceFactor(kLightFaceTop), DarkestCorner(corners));
-    }
-    if (showLeft) {
-        short corners[kLightCorners];
-
-        Light_FaceCorners(x, y, z, kLightFaceLeft, corners);
-        leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft), DarkestCorner(corners));
-    }
-    if (showRight) {
-        short corners[kLightCorners];
-
-        Light_FaceCorners(x, y, z, kLightFaceRight, corners);
-        rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight), DarkestCorner(corners));
-    }
-
-    if (Sprite_Ready()) {
-        /* Textured path: three baked, pre-shaded faces per block. The sprite
-         * layer takes local coordinates and trims to the play area itself. */
-        /* Sides before the top: the diamond's lower vertex meets the sides'
-         * upper edges, and painting the top last covers the one-pixel seam that
-         * otherwise shows as a dark speck at every tile junction. */
-        if (showLeft) {
-            Sprite_Draw((short)(sx - kTileW / 2), sy, id, kBlockFaceLeft,
-                        Sprite_ShadeStep(leftShade));
-        }
-        if (showRight) {
-            Sprite_Draw(sx, sy, id, kBlockFaceRight, Sprite_ShadeStep(rightShade));
-        }
-        if (showTop) {
-            Sprite_Draw((short)(sx - kTileW / 2), (short)(sy - kTileH / 2), id,
-                        kBlockFaceTop, Sprite_ShadeStep(topShade));
-        }
-        return;
-    }
-
-    /* Top face: diamond centred at (sx, sy), kTileW x kTileH. */
-    if (showTop) {
-        PaintQuad(sx, sy - kTileH / 2, sx + kTileW / 2, sy, sx, sy + kTileH / 2,
-                  sx - kTileW / 2, sy, id, kBlockFaceTop, topShade, topVariation);
-    }
-
-    /* Left face. */
-    if (showLeft) {
-        PaintQuad(sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH,
-                  sx - kTileW / 2, sy + kTileH / 2, id, kBlockFaceLeft, leftShade, topVariation);
-    }
-
-    /* Right face. */
-    if (showRight) {
-        PaintQuad(sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
-                  sx, sy + kTileH, id, kBlockFaceRight, rightShade, topVariation);
-    }
-
-    /* No outline. A block is separated from its neighbours by the shade step
-     * between the top face and the two sides plus the contact shadow, exactly
-     * as in the reference art; a 1 px black grid over every face is what made
-     * the world look like a spreadsheet. */
-}
 
 /* Inverse of Iso_Project's documented z=0 mapping, clamped to the world.
  * Used only to derive the visible tile range; clicks use Iso_Unproject. */
-static short FloorDivInt(int a, int b)
-{
-    int q = a / b;
 
-    if ((a % b) != 0 && ((a < 0) != (b < 0))) {
-        q--;
-    }
-    return (short)q;
-}
-
-static void UnprojectClamped(short px, short py, short *outX, short *outY)
-{
-    short sx, sy, x, y;
-
-    sx = FloorDivInt((int)px - (int)sCamX, kTileW / 2);
-    sy = FloorDivInt((int)py - (int)sCamY, kTileH / 2);
-
-    x = FloorDivInt((int)sx + (int)sy, 2);
-    y = FloorDivInt((int)sy - (int)sx, 2);
-
-    if (x < 0) {
-        x = 0;
-    }
-    else if (x >= kWorldX) {
-        x = kWorldX - 1;
-    }
-
-    if (y < 0) {
-        y = 0;
-    }
-    else if (y >= kWorldY) {
-        y = kWorldY - 1;
-    }
-
-    *outX = x;
-    *outY = y;
-}
 
 /* Visible tile range for the part of the display being repainted, in
  * display-local coordinates. Expanded by kWorldZ tiles so that raised columns
  * whose tops are in view but whose base tiles are below still render. */
-static void ComputeVisibleRange(Rect *view, short *xMin, short *yMin, short *xMax, short *yMax)
-{
-    short left, top, right, bottom, x, y;
-
-    left   = (short)(view->left - sDisplayRect.left);
-    top    = (short)(view->top - sDisplayRect.top);
-    right  = (short)(view->right - sDisplayRect.left);
-    bottom = (short)(view->bottom - sDisplayRect.top);
-
-    UnprojectClamped(left, top, xMin, yMin);
-    *xMax = *xMin;
-    *yMax = *yMin;
-
-    UnprojectClamped(right, top, &x, &y);
-    if (x < *xMin) *xMin = x;
-    if (x > *xMax) *xMax = x;
-    if (y < *yMin) *yMin = y;
-    if (y > *yMax) *yMax = y;
-
-    UnprojectClamped(left, bottom, &x, &y);
-    if (x < *xMin) *xMin = x;
-    if (x > *xMax) *xMax = x;
-    if (y < *yMin) *yMin = y;
-    if (y > *yMax) *yMax = y;
-
-    UnprojectClamped(right, bottom, &x, &y);
-    if (x < *xMin) *xMin = x;
-    if (x > *xMax) *xMax = x;
-    if (y < *yMin) *yMin = y;
-    if (y > *yMax) *yMax = y;
-
-    *xMin -= kWorldZ;
-    *yMin -= kWorldZ;
-    *xMax += kWorldZ;
-    *yMax += kWorldZ;
-
-    if (*xMin < 0) *xMin = 0;
-    if (*yMin < 0) *yMin = 0;
-    if (*xMax >= kWorldX) *xMax = kWorldX - 1;
-    if (*yMax >= kWorldY) *yMax = kWorldY - 1;
-}
 
 /* Draw the world, bottom z level first, back-to-front inside each level. */
-static void DrawWorld(Rect *view)
-{
-    short xMin, yMin, xMax, yMax, sum, x, y, sumMax, z, top;
-
-    ComputeVisibleRange(view, &xMin, &yMin, &xMax, &yMax);
-    sumMax = (short)(xMax + yMax);
-
-    /* Painter order: far columns first, bottom to top within a column. Walking a
-     * column at a time costs one TopZ lookup per column and nothing at all for
-     * the empty ones outside the island; the old shape walked all 48x48x8 cells
-     * with a bounds-checked World_Get for each. */
-    for (sum = (short)(xMin + yMin); sum <= sumMax; sum++) {
-        for (x = xMin; x <= xMax; x++) {
-            y = (short)(sum - x);
-            if (y < yMin || y > yMax) {
-                continue;
-            }
-            top = World_TopZ(x, y);
-            for (z = 0; z <= top; z++) {
-                BlockID id = World_Get(x, y, z);
-
-                if (id != 0) {
-                    DrawBlock(x, y, z, id);
-                }
-            }
-        }
-    }
-}
 
 /* Compute the rect of one swatch in the selector strip. */
 static void SelectorBlockRect(short index, Rect *outRect)
@@ -1256,7 +905,15 @@ static void GameWindow_Render(void)
          * held block with nothing to write into. */
         Sprite_BeginFrame();
         Sprite_SetView(&sRenderRect);
-        DrawWorld(&sRenderRect);
+        {
+            WorldView view;
+
+            view.display = sDisplayRect;
+            view.camX = sCamX;
+            view.camY = sCamY;
+            view.hasColor = sHasColor;
+            WorldView_Draw(&view, &sRenderRect);
+        }
         Sprite_SetView(&sDisplayRect);
 
         /* Selection box on the surface under the mouse, which is also where a
@@ -1264,7 +921,8 @@ static void GameWindow_Render(void)
         if (sHoverValid) {
             DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
         }
-        DrawPlayer();
+        Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
+                    (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect);
         HUD_DrawCrosshair();
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
@@ -1576,7 +1234,15 @@ unsigned long GameWindow_TimeRender(short iterations, short *outBlocks)
 
         tick = (unsigned long)TickCount();
         Sprite_BeginFrame();
-        DrawWorld(&sDisplayRect);
+        {
+            WorldView view;
+
+            view.display = sDisplayRect;
+            view.camX = sCamX;
+            view.camY = sCamY;
+            view.hasColor = sHasColor;
+            WorldView_Draw(&view, &sDisplayRect);
+        }
         Sprite_EndFrame();
         Sprite_Timing[1] += (long)((unsigned long)TickCount() - tick);
 
@@ -1592,7 +1258,15 @@ unsigned long GameWindow_TimeRender(short iterations, short *outBlocks)
         BeginUpdate(sWindow);
         tick = (unsigned long)TickCount();
         Sprite_BeginFrame();
-        DrawWorld(&sDisplayRect);
+        {
+            WorldView view;
+
+            view.display = sDisplayRect;
+            view.camX = sCamX;
+            view.camY = sCamY;
+            view.hasColor = sHasColor;
+            WorldView_Draw(&view, &sDisplayRect);
+        }
         Sprite_EndFrame();
         Sprite_Timing[1] += (long)((unsigned long)TickCount() - tick);
         EndUpdate(sWindow);
