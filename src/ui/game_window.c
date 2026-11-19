@@ -16,6 +16,7 @@
 #include "../game/texture.h"
 #include "../game/world.h"
 #include "game_window.h"
+#include "sprite_sheet.h"
 #include "utils.h"
 
 /* Module variables */
@@ -175,6 +176,11 @@ void GameWindow_Initialize(void)
     sIsVisible   = false;
 
     Scene_BuildIsland();
+    Sprite_SetView(&sDisplayRect);
+    /* The window sits at windowRect; the sprite layer needs that offset because
+     * it writes to screen memory rather than through the port. */
+    Sprite_SetOrigin((short)windowRect.left, (short)windowRect.top);
+    Sprite_Init();
 }
 
 /* Dispose of the window and free what it owned. */
@@ -183,6 +189,8 @@ void GameWindow_Dispose(void)
     if (!sInitialized) {
         return;
     }
+
+    Sprite_Dispose();
 
     if (sWindow != NULL) {
         DisposeWindow(sWindow);
@@ -403,6 +411,7 @@ static void DrawSelectionBox(short x, short y, short z)
     sx += sDisplayRect.left;
     sy += sDisplayRect.top;
 
+
     PenNormal();
     PenPat(&qd.black);
     MoveTo(sx, (short)(sy - kTileH / 2));
@@ -430,6 +439,7 @@ static void DrawBlock(short x, short y, short z, BlockID id)
     sx += sDisplayRect.left;
     sy += sDisplayRect.top;
 
+
     /* One light factor per face: the sun's angle multiplied by however much of
      * the face is buried. Three neighbour lookups per block, no drawing cost. */
     short topShade   = Light_Combine(Light_FaceFactor(kLightFaceTop),
@@ -452,6 +462,23 @@ static void DrawBlock(short x, short y, short z, BlockID id)
     Boolean showTop   = World_Get(x, y, (short)(z + 1)) == 0;
     Boolean showLeft  = World_Get(x, (short)(y + 1), z) == 0;
     Boolean showRight = World_Get((short)(x + 1), y, z) == 0;
+
+    if (Sprite_Ready()) {
+        /* Textured path: three baked, pre-shaded faces per block. The sprite
+         * layer takes local coordinates and trims to the play area itself. */
+        if (showTop) {
+            Sprite_Draw((short)(sx - kTileW / 2), (short)(sy - kTileH / 2), id,
+                        kBlockFaceTop, Sprite_ShadeStep(topShade));
+        }
+        if (showLeft) {
+            Sprite_Draw((short)(sx - kTileW / 2), sy, id, kBlockFaceLeft,
+                        Sprite_ShadeStep(leftShade));
+        }
+        if (showRight) {
+            Sprite_Draw(sx, sy, id, kBlockFaceRight, Sprite_ShadeStep(rightShade));
+        }
+        return;
+    }
 
     /* Top face: diamond centred at (sx, sy), kTileW x kTileH. */
     if (showTop) {
@@ -682,6 +709,7 @@ static void InvalidateColumn(short x, short y, short z)
     Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
     sx += sDisplayRect.left;
     sy += sDisplayRect.top;
+
 
     SetRect(&r, sx - kTileW / 2 - 2, sy - kTileH / 2 - 2, sx + kTileW / 2 + 2, sy + kTileH + 2);
     MarkDirty(&r);
@@ -958,6 +986,7 @@ static void GameWindow_Render(void)
     Sky_Draw(sWindow, sDisplayRect, sHasColor, (long)TickCount());
 
     /* World blocks (nothing to do when only the selector strip was dirty) */
+
     if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
         DrawWorld(&sRenderRect);
 

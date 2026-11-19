@@ -32,11 +32,15 @@ set(SRC_C
     src/ui/about_window.c
     src/ui/window_manager.c
     src/ui/utils.c
+    src/ui/sprite_sheet.c
     src/game/world.c
     src/game/iso.c
     src/game/texture.c
     src/game/light.c
     src/game/blocks.c
+    src/game/art.c
+    src/game/bake.c
+    src/game/bake_quickdraw.c
     src/game/scene.c
     src/game/sky.c
 )
@@ -51,11 +55,14 @@ set(HEADER_FILES
     src/ui/about_window.h
     src/ui/window_manager.h
     src/ui/utils.h
+    src/ui/sprite_sheet.h
     src/game/world.h
     src/game/iso.h
     src/game/texture.h
     src/game/light.h
     src/game/blocks.h
+    src/game/art.h
+    src/game/bake.h
     src/game/scene.h
     src/game/sky.h
 )

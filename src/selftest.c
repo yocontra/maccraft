@@ -93,6 +93,7 @@ static char *AppendNum(char *p, long value)
 
 /* log_line("open=", "ok", 12) — text and/or a number, then CR. */
 
+
 static void LogLine(const char *a, const char *b, long num, Boolean withNum)
 {
     char line[300];

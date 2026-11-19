@@ -39,11 +39,10 @@ block under the middle of the view. Every face is textured: one patterned fill
 whose ink is a highlight step of the block's colour, so a surface reads as
 material rather than as a flat wash.
 
-Block textures are the next step and are already built: `src/game/art.c` holds a
-64-entry shade-ramp palette and sixteen hand-authored 16x16 textures, and
-`src/game/bake.c` shears them onto the renderer's exact quads. Getting an indexed
-bitmap onto this QuickDraw port is unsolved; `docs/textures.md` records what was
-tried, what each attempt proved, and the next three things to try.
+Every block face carries a hand-authored 16x16 texture, sheared onto its
+isometric quad and shaded one step per face direction, drawn in direct colour.
+See `docs/textures.md` for how the pixel pipeline works and the two QuickDraw
+facts it rests on.
 
 ## Building
 
