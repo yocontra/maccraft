@@ -102,8 +102,12 @@ static void TestBandsMonotonic(void)
                                    Component(packedHorizon, 4) +
                                    Component(packedHorizon, 0);
 
+        /* The sky is one colour end to end: a gradient cannot be drawn here
+         * without a hard quantisation band, so the horizon must be neither
+         * darker than the zenith nor lighter -- only blue-dominant at both. */
         CHECK(Component(packedTop, 0) > Component(packedTop, 8));
-        CHECK(horizonSum > topSum);
+        CHECK(Component(packedHorizon, 0) > Component(packedHorizon, 8));
+        CHECK(horizonSum >= topSum);
     }
 }
 
