@@ -21,6 +21,15 @@ void GameWindow_Show(Boolean visible);
 /* Determine if the window is visible */
 Boolean GameWindow_IsVisible(void);
 
+/* Rebuild the island and respawn the player. */
+void GameWindow_ResetWorld(void);
+
+/* Player state for the harness. */
+Boolean GameWindow_PlayerGrounded(void);
+short GameWindow_PlayerZ(void);
+short GameWindow_PlayerRespawns(void);
+short GameWindow_PlayerJumpPeakForTest(void);
+
 /* Harness hook: repaint `iterations` times, return elapsed ticks. */
 unsigned long GameWindow_TimeRender(short iterations, short *outBlocks);
 

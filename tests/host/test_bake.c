@@ -15,6 +15,9 @@
 
 #include "art.h"
 #include "bake.h"
+
+/* The side box: 16 wide, 24 tall, so a column can hold sixteen texels. */
+#define kSideHeightExpected 24
 #include "blocks.h"
 
 static int sFailures;
@@ -47,26 +50,24 @@ static void OracleTop(short c, short r, short *x, short *y)
  *      2y <= x + 15   (above the bottom edge)
  * The right quad is (0,8) (16,0) (16,8) (0,16):
  *      2y >= 16 - x
- *      2y <= 31 - x
- * Both are eight inked rows in every column.  These are written here with
- * integer comparisons, not the baker's divisions.
+ *    a full block tall: sixteen texels per column, and the column's first row
+ *    is x/2 on the left face and (15-x)/2 on the right, so the bounding box is
+ *    16x24 and the texture maps 1:1 with the shear in the geometry.
  */
 static unsigned char OracleSideInside(short x, short y, short face)
 {
-    short twice = (short)(2 * y);
+    short top = (face == kBakeFaceLeft) ? (short)(x / 2) : (short)((15 - x) / 2);
 
-    if (face == kBakeFaceLeft) {
-        return (unsigned char)(twice >= x && twice <= x + 15);
-    }
-    return (unsigned char)(twice >= 16 - x && twice <= 31 - x);
+    return (unsigned char)(y >= top && y < top + 16);
 }
 
 static unsigned char OracleSideTexel(const unsigned char *tex, short face,
                                      short x, short y)
 {
     short sx = (face == kBakeFaceRight) ? (short)(15 - x) : x;
+    short top = (face == kBakeFaceLeft) ? (short)(x / 2) : (short)((15 - x) / 2);
 
-    return tex[y * 16 + sx];
+    return tex[(y - top) * 16 + sx];
 }
 
 /* ---------------------------------------------------------------- */
@@ -159,7 +160,7 @@ static void TestSideGeometry(const unsigned char *tex, short face)
     short firstY[16], lastY[16];
 
     CHECK(Bake_FaceWidth(face) == 16);
-    CHECK(Bake_FaceHeight(face) == 16);
+    CHECK(Bake_FaceHeight(face) == kSideHeightExpected);
 
     memset(out, 0xAA, sizeof out);
     memset(mask, 0xAA, sizeof mask);
@@ -172,7 +173,7 @@ static void TestSideGeometry(const unsigned char *tex, short face)
             count++;
         }
     }
-    CHECK(count == 128); /* half of the 16x16 bounding box */
+    CHECK(count == 256); /* sixteen texels in each of sixteen columns */
 
     /* Exactly the eight rows between the two sloped edges in each column,
      * and nothing outside them. */
@@ -181,7 +182,7 @@ static void TestSideGeometry(const unsigned char *tex, short face)
 
         firstY[x] = -1;
         lastY[x] = -1;
-        for (y = 0; y < 16; y++) {
+        for (y = 0; y < kSideHeightExpected; y++) {
             unsigned char expected = OracleSideInside(x, y, face);
             unsigned char inked = mask[y * 16 + x];
 
@@ -194,13 +195,13 @@ static void TestSideGeometry(const unsigned char *tex, short face)
                 n++;
             }
         }
-        CHECK(n == 8);
-        CHECK(lastY[x] - firstY[x] + 1 == 8);
+        CHECK(n == 16);
+        CHECK(lastY[x] - firstY[x] + 1 == 16);
     }
 
     /* Texel values survive 1:1 inside the band; outside the band the buffer
      * stays cleared. */
-    for (y = 0; y < 16; y++) {
+    for (y = 0; y < kSideHeightExpected; y++) {
         for (x = 0; x < 16; x++) {
             if (OracleSideInside(x, y, face)) {
                 CHECK(out[y * 16 + x] == OracleSideTexel(tex, face, x, y));
@@ -211,20 +212,20 @@ static void TestSideGeometry(const unsigned char *tex, short face)
         }
     }
 
-    /* The four extreme points of the band, and their outside neighbours. */
+    /* The four extreme points of each face, and one pixel outside each. */
     if (face == kBakeFaceLeft) {
-        CHECK(mask[0 * 16 + 0] == 1);   /* (0,0) */
-        CHECK(mask[7 * 16 + 0] == 1);   /* (0,7) */
-        CHECK(mask[8 * 16 + 15] == 1);  /* (15,8) */
-        CHECK(mask[15 * 16 + 15] == 1); /* (15,15) */
-        CHECK(mask[8 * 16 + 0] == 0);   /* above the band at x=0 */
+        CHECK(mask[0 * 16 + 0] == 1);    /* (0,0): top of column 0 */
+        CHECK(mask[15 * 16 + 0] == 1);   /* (0,15): bottom of column 0 */
+        CHECK(mask[7 * 16 + 15] == 1);   /* (15,7): top of column 15 */
+        CHECK(mask[22 * 16 + 15] == 1);  /* (15,22): bottom of column 15 */
+        CHECK(mask[23 * 16 + 15] == 0);  /* below the band */
     }
     else {
-        CHECK(mask[8 * 16 + 0] == 1);   /* (0,8) */
-        CHECK(mask[15 * 16 + 0] == 1);  /* (0,15) */
-        CHECK(mask[1 * 16 + 15] == 1);  /* (15,1) */
-        CHECK(mask[8 * 16 + 15] == 1);  /* (15,8) */
-        CHECK(mask[0 * 16 + 15] == 0);  /* above the band at x=15 */
+        CHECK(mask[7 * 16 + 0] == 1);    /* (0,7): top of column 0 */
+        CHECK(mask[22 * 16 + 0] == 1);   /* (0,22): bottom of column 0 */
+        CHECK(mask[0 * 16 + 15] == 1);   /* (15,0): top of column 15 */
+        CHECK(mask[15 * 16 + 15] == 1);  /* (15,15): bottom of column 15 */
+        CHECK(mask[16 * 16 + 15] == 0);  /* below the band */
     }
 }
 

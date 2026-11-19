@@ -819,10 +819,59 @@ def cmd_window(args, session):
     print(json.dumps(win, sort_keys=True))
 
 
+def cmd_start(args, session):
+    """Build the throwaway VM and boot it, recording the session.
+
+    capture.sh and the scenarios call this; without it the harness in this repo
+    could not boot the guest at all and every screenshot had to be taken through
+    the other project's driver.
+    """
+    vm_dir = os.path.join(WORK, "Test.sheepvm")
+    if args:
+        vm_dir = os.path.abspath(args[0])
+
+    assets = check_environment()
+    if not os.path.isdir(vm_dir):
+        run_make_vm(assets)
+
+    proc, win, log = launch_emulator(assets, vm_dir)
+    save_session({"proc": proc.pid, "window": win["id"], "vm": vm_dir})
+    print("started pid %d, window %d" % (proc.pid, win["id"]))
+    return 0
+
+
+def cmd_quit(args, session):
+    """Stop the emulator this session started, if it is still running."""
+    proc = session.get("proc") if session else None
+    if proc:
+        try:
+            os.killpg(os.getpgid(int(proc)), signal.SIGTERM)
+        except OSError:
+            pass
+    try:
+        os.unlink(SESSION_PATH)
+    except OSError:
+        pass
+    print("quit")
+    return 0
+
+
+def cmd_wait_window(args, session):
+    timeout = float(args[0]) if args else 30.0
+    win = wait_for_window(timeout=timeout)
+    if win is None:
+        raise EnvError("SheepShaver window did not appear")
+    print(json.dumps(win, sort_keys=True))
+    return 0
+
+
 COMMANDS = {
+    "start": cmd_start,
+    "quit": cmd_quit,
+    "wait-window": cmd_wait_window,
     "click": cmd_click,
-    "dblclick": cmd_dblclick,
     "move": cmd_move,
+    "dblclick": cmd_dblclick,
     "key": cmd_key,
     "type": cmd_type,
     "text": cmd_type,
@@ -841,7 +890,9 @@ COMMANDS = {
 
 def run_command(command, args):
     try:
-        session = load_session()
+        # Boot and teardown do not need an existing session; everything else
+        # addresses the running guest.
+        session = None if command in ("start", "quit", "wait-window") else load_session()
         COMMANDS[command](args, session)
     except CheckFailed as exc:
         print("FAIL: %s" % exc, file=sys.stderr)

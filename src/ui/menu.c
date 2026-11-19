@@ -127,8 +127,9 @@ void DoMenuCommand(long menuCommand)
                 break;
 
             case kItemResetWorld:
-                /* Reset the game world */
-                /* World reset logic would go here */
+                /* Rebuild the island and put the player back on it: the menu
+                 * promised a reset and used to do nothing at all. */
+                GameWindow_ResetWorld();
                 break;
             }
         }

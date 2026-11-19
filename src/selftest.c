@@ -184,6 +184,12 @@ void SelfTest_Run(void)
     Pump(60);
 
     LogLine("game_visible=", NULL, (long)GameWindow_IsVisible(), true);
+    /* The player is a simulation, so the harness can prove it lands and jumps
+     * rather than trusting the picture. */
+    LogLine("player_grounded=", NULL, (long)GameWindow_PlayerGrounded(), true);
+    LogLine("player_z=", NULL, (long)GameWindow_PlayerZ(), true);
+    LogLine("player_jump_peak=", NULL, (long)GameWindow_PlayerJumpPeakForTest(), true);
+    LogLine("player_respawns=", NULL, (long)GameWindow_PlayerRespawns(), true);
     {
         OSErr err = Sfx_LastError();
 

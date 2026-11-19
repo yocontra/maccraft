@@ -15,10 +15,12 @@
 #include "../game/sky.h"
 #include "../game/light.h"
 #include "../game/pick.h"
+#include "../game/player.h"
 #include "../sound/sfx.h"
 #include "../game/texture.h"
 #include "../game/world.h"
 #include "game_window.h"
+#include "hud.h"
 #include "sprite_sheet.h"
 #include "utils.h"
 
@@ -28,11 +30,23 @@ static Boolean sInitialized = false;
 static Boolean sIsVisible   = false;
 static Rect sContentRect;       /* Main content area */
 static Rect sBlockSelectorRect;
-static Rect sSwatchSavedView;
 
 /* The surface under the mouse. The selection box and the click handler both use
  * it, so what is highlighted is exactly what a click acts on. */
 static Rect sTitleStripRect;
+static unsigned long sSwingUntil;
+static short Swing(void)
+{
+    long left = (long)sSwingUntil - (long)TickCount();
+
+    if (left <= 0) {
+        return 0;
+    }
+    if (left > 8) {
+        left = 8;
+    }
+    return (short)left;
+}
 static Boolean sHoverValid = false;
 static short sHoverX = 0;
 static short sHoverY = 0;
@@ -40,6 +54,12 @@ static short sHoverZ = 0; /* Block selector area at bottom */
 static Rect sDisplayRect;       /* Game view area */
 
 /* Camera offset in display-local coordinates (see Iso_Project). */
+static Player sPlayer;
+static short sIntentX = 0;
+static short sIntentY = 0;
+static Boolean sJumpHeld = false;
+static unsigned long sLastPhysicsTick = 0;
+
 static short sCamX = 0;
 static short sCamY = 0;
 
@@ -67,15 +87,10 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
 
 /* Scene and block palette. The patterns are for 1-bit displays; the colours
  * are what a colour display actually fills with. */
-static const RGBColor kSceneBack   = {0x8800, 0xAA00, 0xDD00};
-static const RGBColor kSceneGround = {0x9999, 0x8888, 0x6666};
 /* Texture for the colour path. Sparse on purpose: a 50% pattern at 32x16
  * turns into a checkerboard of noise, while one dot per 8x8 cell reads as
  * grain and still lets the base colour dominate. */
-static const Pattern kGrainSparse = {0x11, 0x00, 0x44, 0x00, 0x11, 0x00, 0x00, 0x22};
-static const Pattern kGrainMedium = {0x11, 0x44, 0x00, 0x11, 0x88, 0x00, 0x22, 0x00};
 
-static const RGBColor kOutline     = {0x0000, 0x0000, 0x0000};
 
 static const RGBColor kGrassTop    = {0x0000, 0xBB00, 0x2200};
 static const RGBColor kGrassLeft   = {0x0000, 0x5500, 0x0000};
@@ -111,29 +126,6 @@ static void DetectColor(void)
 }
 
 /* Top / left / right pattern and colour for one block type. */
-static void BlockFaces(BlockID id, Pattern **topPat, const RGBColor **topCol,
-                       Pattern **leftPat, const RGBColor **leftCol,
-                       Pattern **rightPat, const RGBColor **rightCol)
-{
-    switch (id) {
-    case 2: /* stone */
-        *topPat = &qd.ltGray;  *topCol = &kStoneTop;
-        *leftPat = &qd.dkGray; *leftCol = &kStoneLeft;
-        *rightPat = &qd.gray;  *rightCol = &kStoneRight;
-        break;
-    case 3: /* grass */
-        *topPat = &qd.white;   *topCol = &kGrassTop;
-        *leftPat = &qd.dkGray; *leftCol = &kGrassLeft;
-        *rightPat = &qd.gray;  *rightCol = &kGrassRight;
-        break;
-    case 1: /* dirt */
-    default:
-        *topPat = &qd.gray;    *topCol = &kDirtTop;
-        *leftPat = &qd.dkGray; *leftCol = &kDirtLeft;
-        *rightPat = &qd.gray;  *rightCol = &kDirtRight;
-        break;
-    }
-}
 
 /* Create the game window and lay out the play area and the selector strip. */
 void GameWindow_Initialize(void)
@@ -178,6 +170,12 @@ void GameWindow_Initialize(void)
     /* Title strip: the band between the frame and the play area. */
     SetRect(&sTitleStripRect, sDisplayRect.left, kGameViewMargin,
             sDisplayRect.right, (short)(sDisplayRect.top - 1));
+
+    /* Drop the player on top of the plateau at the centre of the island. */
+    Player_Spawn(&sPlayer, 24, 24, (short)(World_TopZ(24, 24) + 1));
+
+    /* The HUD works inside these; it never guesses at window geometry. */
+    HUD_Layout(&sTitleStripRect, &sBlockSelectorRect, &sDisplayRect);
 
     /* Centre tile (24,24) in the play area: Iso_Project(24,24,0,0,0) is
      * (0, 384), so the camera offset is the display centre minus that. */
@@ -259,29 +257,24 @@ static void FlushDirty(void)
 
     r = sDirtyRect;
     sDirty = false;
-    InvalRect(&r);
+    {
+        GrafPtr saved;
+
+        GetPort(&saved);
+        SetPort(sWindow);
+        InvalRect(&r);
+        SetPort(saved);
+    }
 }
 
 /* Face lookups come from src/game/texture.c, which owns the per-block,
  * per-face base colour, base pattern and grain for both display types. */
-static Pattern *FacePattern(BlockID id, short face)
-{
-    return Texture_BasePattern(id, face);
-}
 
 /* Grain patterns: the second tone of each face. On a colour display the base
  * is a solid colour and this pattern is filled in a darker shade of it; on a
  * 1-bit display the base is a pattern and this one is filled in black, so a
  * face still reads as textured on a Macintosh Plus. */
-static Pattern *FaceGrainPattern(BlockID id, short face, Boolean hasColor)
-{
-    return Texture_GrainPattern(id, face, hasColor);
-}
 
-static const RGBColor *FaceGrainColor(BlockID id, short face)
-{
-    return Texture_GrainColor(id, face, true);
-}
 
 static RGBColor Shaded(const RGBColor *base, short factor);
 
@@ -330,12 +323,6 @@ static RGBColor FaceBase(BlockID id, short face, short variation)
 
 /* The grain is the same hue, one ramp step down: enough to read as material,
  * not enough to compete with the base colour. */
-static RGBColor FaceGrain(BlockID id, short face, short variation)
-{
-    RGBColor base = FaceBase(id, face, variation);
-
-    return Shaded(&base, 200);
-}
 
 /* Fill one face. FillPoly takes an explicit pattern: on a colour display the
  * pattern's 1-bits take the foreground colour, so an all-ones pattern plus
@@ -428,6 +415,58 @@ static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2
     KillPoly(poly);
 }
 
+/* Keep the player in the middle of the play area. The camera offsets are what
+ * Iso_Project adds, so the inverse is a subtract: project the player at camera
+ * zero and move the camera to cancel it. */
+static void CentreOnPlayer(void)
+{
+    short px = (short)(sPlayer.x >> 16);
+    short py = (short)(sPlayer.y >> 16);
+    short pz = (short)(sPlayer.z >> 16);
+    short targetX = (short)((sDisplayRect.right - sDisplayRect.left) / 2);
+    short targetY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2);
+
+    sCamX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
+    sCamY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+}
+
+/* A player figure, two blocks tall: shadow on the ground, legs, torso, head.
+ * Drawn with the HUD's pixel fills because it has to sit in front of the world
+ * and behind the HUD, and because a block-textured avatar at this scale would
+ * be one bright pixel. */
+static void DrawPlayer(void)
+{
+    short px = (short)(sPlayer.x >> 16);
+    short py = (short)(sPlayer.y >> 16);
+    short pz = (short)(sPlayer.z >> 16);
+    short sx, sy;
+    Rect r;
+
+    Iso_Project(px, py, pz, sCamX, sCamY, &sx, &sy);
+    sx = (short)(sx + sDisplayRect.left);
+    sy = (short)(sy + sDisplayRect.top);
+
+    /* Nothing to draw when the player is not in the play area, and the figure's
+     * own extent is clamped to it: an off-screen or half-off avatar must not
+     * hand the pixel writer coordinates it has never seen. */
+    if (sx < (short)(sDisplayRect.left - 8) || sx > (short)(sDisplayRect.right + 8)) {
+        return;
+    }
+    if (sy < (short)(sDisplayRect.top - 32) || sy > (short)(sDisplayRect.bottom + 8)) {
+        return;
+    }
+
+    SetRect(&r, (short)(sx - 5), sy, (short)(sx + 6), (short)(sy + 3));
+    Sprite_FillRect(&r, 0x1E3E1EUL);          /* contact shadow */
+    SetRect(&r, (short)(sx - 3), (short)(sy - 10), (short)(sx + 4), sy);
+    Sprite_FillRect(&r, 0x2B3D8CUL);          /* legs */
+    SetRect(&r, (short)(sx - 4), (short)(sy - 20), (short)(sx + 5), (short)(sy - 10));
+    Sprite_FillRect(&r, 0x3D5BD6UL);          /* torso */
+    SetRect(&r, (short)(sx - 3), (short)(sy - 27), (short)(sx + 4), (short)(sy - 20));
+    Sprite_FillRect(&r, 0xE0B088UL);          /* head */
+}
+
+
 /* The cloud slabs, drawn through the pixel path: QuickDraw fills inside the
  * play area do not land on this port, and the sky is painted by the sprite
  * layer for exactly that reason. Positions come from sky.c, which owns the
@@ -440,7 +479,7 @@ static void DrawClouds(void)
     short cx, cy, cw, ch, uy;
     long x;
 
-    for (x = (long)sDisplayRect.left - Sky_CloudPeriod(); x < (long)sDisplayRect.right;
+    for (x = (long)sRenderRect.left - Sky_CloudPeriod(); x < (long)sRenderRect.right;
          x += Sky_CloudPeriod()) {
         for (i = 0; i < rectCount; i++) {
             Rect slab;
@@ -448,15 +487,15 @@ static void DrawClouds(void)
             Sky_CloudRect(i, &cx, &cy, &cw, &ch, &uy);
             slab.left = (short)(x + cx + shift);
             slab.right = (short)(slab.left + cw);
-            slab.top = (short)(sDisplayRect.top + uy);
+            slab.top = (short)(sRenderRect.top + uy);
             slab.bottom = (short)(slab.top + 1);
 
-            if (slab.right <= sDisplayRect.left || slab.left >= sDisplayRect.right) {
+            if (slab.right <= sRenderRect.left || slab.left >= sRenderRect.right) {
                 continue;
             }
             Sprite_FillRect(&slab, 0xC8C8D8UL); /* shaded underside */
 
-            slab.top = (short)(sDisplayRect.top + cy);
+            slab.top = (short)(sRenderRect.top + cy);
             slab.bottom = (short)(slab.top + ch);
             Sprite_FillRect(&slab, 0xFFFFFFUL);
         }
@@ -465,41 +504,10 @@ static void DrawClouds(void)
 
 /* Minecraft's crosshair: a small white plus with a dark backing so it reads on
  * both sky and grass. Drawn with QuickDraw after the world pass. */
-static void DrawCrosshair(void)
-{
-    short cx = (short)((sDisplayRect.left + sDisplayRect.right) / 2);
-    short cy = (short)((sDisplayRect.top + sDisplayRect.bottom) / 2);
-    Rect bar;
-
-    /* Drawn through the sprite pixel path, not QuickDraw: inside the play area
-     * the world is written straight to screen memory, and QuickDraw fills there
-     * never survived. Dark backing first so the cross reads on grass and sky. */
-    SetRect(&bar, (short)(cx - 6), (short)(cy - 1), (short)(cx + 7), (short)(cy + 1));
-    Sprite_FillRect(&bar, 0x000000UL);
-    SetRect(&bar, (short)(cx - 1), (short)(cy - 6), (short)(cx + 1), (short)(cy + 7));
-    Sprite_FillRect(&bar, 0x000000UL);
-
-    SetRect(&bar, (short)(cx - 5), cy, (short)(cx + 6), (short)(cy + 1));
-    Sprite_FillRect(&bar, 0xFFFFFFUL);
-    SetRect(&bar, cx, (short)(cy - 5), (short)(cx + 1), (short)(cy + 6));
-    Sprite_FillRect(&bar, 0xFFFFFFUL);
-}
 
 /* The block in your hand: the selected kind, magnified twice, in the corner of
  * the play area. Drawn with the same sprite pipeline as the world, at scale 2,
  * which is the one place a block is shown larger than the world draws it. */
-static void DrawHeldBlock(BlockID id)
-{
-    short bx = (short)(sDisplayRect.right - 116);
-    short by = (short)(sDisplayRect.bottom - 84);
-
-    if (!Sprite_Ready()) {
-        return;
-    }
-    Sprite_DrawScaled((short)(bx + 32), by, id, kBlockFaceTop, 0, 2);
-    Sprite_DrawScaled((short)(bx + 32), (short)(by + 16), id, kBlockFaceLeft, 1, 2);
-    Sprite_DrawScaled((short)(bx + 64), (short)(by + 16), id, kBlockFaceRight, 2, 2);
-}
 
 /* Bounding box of the selection box for a tile, with a pixel of slack for the
  * outline. Used to invalidate just the old and new hover cells when the mouse
@@ -512,7 +520,7 @@ static void SelectionBoxRect(short x, short y, short z, Rect *out)
     sx += sDisplayRect.left;
     sy += sDisplayRect.top;
     SetRect(out, (short)(sx - kTileW / 2 - 2), (short)(sy - kTileH / 2 - 2),
-            (short)(sx + kTileW / 2 + 2), (short)(sy + kTileH + 2));
+            (short)(sx + kTileW / 2 + 2), (short)(sy + kTileH / 2 + kTileH + 2));
 }
 
 /* Which surface the given point in the play area refers to. Raised terrain is
@@ -527,6 +535,15 @@ static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *out
                      sCamX, sCamY, outX, outY, outZ);
 }
 
+/* The block under the hover, which is what the strip reports as "look". */
+static BlockID HoveredBlock(void)
+{
+    if (!sHoverValid || sHoverZ <= 0) {
+        return 0;
+    }
+    return World_Get(sHoverX, sHoverY, (short)(sHoverZ - 1));
+}
+
 /* Follow the mouse. Moving between cells invalidates only the two selection
  * boxes and the status strip, so hovering costs a few hundred pixels of drawing
  * rather than a full frame. */
@@ -536,7 +553,16 @@ static void UpdateHover(void)
     short x, y, z;
     Boolean valid;
 
+    /* GetMouse is in global coordinates; the picker works in the window's. */
     GetMouse(&mouse);
+    {
+        GrafPtr saved;
+
+        GetPort(&saved);
+        SetPort(sWindow);
+        GlobalToLocal(&mouse);
+        SetPort(saved);
+    }
     valid = PickSurfaceAt(mouse, &x, &y, &z);
 
     if (valid == sHoverValid && valid && x == sHoverX && y == sHoverY && z == sHoverZ) {
@@ -592,13 +618,28 @@ static void DrawSelectionBox(short x, short y, short z)
     MoveTo(sx, (short)(sy + kTileH / 2));
     LineTo(sx, (short)(sy + kTileH / 2 + kTileH));
     MoveTo((short)(sx - kTileW / 2), sy);
-    LineTo((short)(sx - kTileW / 2), (short)(sy + kTileH / 2));
+    LineTo((short)(sx - kTileW / 2), (short)(sy + kTileH));
     MoveTo((short)(sx + kTileW / 2), sy);
-    LineTo((short)(sx + kTileW / 2), (short)(sy + kTileH / 2));
+    LineTo((short)(sx + kTileW / 2), (short)(sy + kTileH));
 }
 
 /* Draw one block: top diamond plus its two visible side faces, all centred on
  * Iso_Project(x, y, z, ...) and clipped nowhere (the update region clips). */
+/* The darkest of a face's four corner occlusions: one boxed corner is enough to
+ * drop the face a shade, the way Minecraft's smooth lighting reads. */
+static short DarkestCorner(const short corners[kLightCorners])
+{
+    short darkest = 256;
+    short i;
+
+    for (i = 0; i < kLightCorners; i++) {
+        if (corners[i] < darkest) {
+            darkest = corners[i];
+        }
+    }
+    return darkest;
+}
+
 static void DrawBlock(short x, short y, short z, BlockID id)
 {
     short sx, sy;
@@ -634,32 +675,44 @@ static void DrawBlock(short x, short y, short z, BlockID id)
     }
 
     topVariation = Block_Variation(x, y, z);
+    /* Occlusion comes from the four corners of the face, not one number for the
+     * whole quad: a face with a boxed corner is darker than an open one, which
+     * is what gives Minecraft its seams where blocks meet. */
     if (showTop) {
-        topShade = Light_Combine(Light_FaceFactor(kLightFaceTop),
-                                 Light_Occlusion(x, y, z, kLightFaceTop));
+        short corners[kLightCorners];
+
+        Light_FaceCorners(x, y, z, kLightFaceTop, corners);
+        topShade = Light_Combine(Light_FaceFactor(kLightFaceTop), DarkestCorner(corners));
     }
     if (showLeft) {
-        leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft),
-                                  Light_Occlusion(x, y, z, kLightFaceLeft));
+        short corners[kLightCorners];
+
+        Light_FaceCorners(x, y, z, kLightFaceLeft, corners);
+        leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft), DarkestCorner(corners));
     }
     if (showRight) {
-        rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight),
-                                   Light_Occlusion(x, y, z, kLightFaceRight));
+        short corners[kLightCorners];
+
+        Light_FaceCorners(x, y, z, kLightFaceRight, corners);
+        rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight), DarkestCorner(corners));
     }
 
     if (Sprite_Ready()) {
         /* Textured path: three baked, pre-shaded faces per block. The sprite
          * layer takes local coordinates and trims to the play area itself. */
-        if (showTop) {
-            Sprite_Draw((short)(sx - kTileW / 2), (short)(sy - kTileH / 2), id,
-                        kBlockFaceTop, Sprite_ShadeStep(topShade));
-        }
+        /* Sides before the top: the diamond's lower vertex meets the sides'
+         * upper edges, and painting the top last covers the one-pixel seam that
+         * otherwise shows as a dark speck at every tile junction. */
         if (showLeft) {
             Sprite_Draw((short)(sx - kTileW / 2), sy, id, kBlockFaceLeft,
                         Sprite_ShadeStep(leftShade));
         }
         if (showRight) {
             Sprite_Draw(sx, sy, id, kBlockFaceRight, Sprite_ShadeStep(rightShade));
+        }
+        if (showTop) {
+            Sprite_Draw((short)(sx - kTileW / 2), (short)(sy - kTileH / 2), id,
+                        kBlockFaceTop, Sprite_ShadeStep(topShade));
         }
         return;
     }
@@ -823,82 +876,6 @@ static void SelectorBlockRect(short index, Rect *outRect)
 }
 
 /* Draw the block selector UI at the bottom of the window. */
-static void DrawBlockSelector(void)
-{
-    Rect frameRect  = sBlockSelectorRect;
-    Rect shadowRect = frameRect;
-    Rect blockRect;
-    short i;
-
-    /* Shadow effect */
-    PenNormal();
-    PenSize(1, 1);
-    OffsetRect(&shadowRect, 1, 1);
-    PenPat(&qd.gray);
-    FrameRect(&shadowRect);
-    PenNormal();
-
-    /* Frame around the block selector area */
-    ForeColor(blackColor);
-    FrameRect(&frameRect);
-
-    /* Light background */
-    InsetRect(&frameRect, 1, 1);
-    BackPat(&qd.white);
-    BackColor(whiteColor);
-    EraseRect(&frameRect);
-
-    Sprite_BeginFrame();
-
-    /* Draw one swatch per block kind */
-    for (i = 0; i < kGameNumBlockTypes; i++) {
-        SelectorBlockRect(i, &blockRect);
-
-        PenNormal();
-        ForeColor(blackColor);
-        FrameRect(&blockRect);
-
-        if (Sprite_Ready()) {
-            /* Textured swatches: the block's own top face, drawn by the same
-             * sprite pipeline as the world. The sprite layer clips to the play
-             * area, so its view is narrowed to the selector for the duration. */
-            sSwatchSavedView = sDisplayRect;
-            Sprite_SetView(&sBlockSelectorRect);
-            Sprite_Draw((short)(blockRect.left + (blockRect.right - blockRect.left) / 2 - kTileW / 2),
-                        (short)(blockRect.top + (blockRect.bottom - blockRect.top) / 2 - kTileH / 2),
-                        (BlockID)(i + 1), kBlockFaceTop, 0);
-            Sprite_SetView(&sSwatchSavedView);
-        }
-        else if (sHasColor) {
-            RGBColor swatch = FaceBase((BlockID)(i + 1), kBlockFaceTop, 0);
-
-            RGBForeColor(&swatch);
-            PenPat(&qd.black);
-            PaintRect(&blockRect);
-        }
-        else {
-            /* One bit per pixel: the kind's own grain stencil stands in for the
-             * colour that a 1-bit screen cannot show. */
-            Pattern stamp;
-
-            Block_Grain((BlockID)(i + 1), kBlockFaceTop, 0, (unsigned char *)&stamp);
-            PenPat(&stamp);
-            PaintRect(&blockRect);
-        }
-
-        /* Highlight the selected block type */
-        if (i == sBlockType) {
-            Rect highlightRect = blockRect;
-            InsetRect(&highlightRect, -2, -2);
-            PenNormal();
-            PenSize(2, 2);
-            FrameRect(&highlightRect);
-            PenSize(1, 1);
-        }
-    }
-
-    PenNormal();
-}
 
 /* Invalidate only the screen rect covered by one column at height z. */
 static void InvalidateColumn(short x, short y, short z)
@@ -946,6 +923,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
             newZ = (short)(topZ + 1);
             if (newZ < kWorldZ && World_Set(x, y, newZ, (BlockID)(sBlockType + 1))) {
                 Sfx_Play(kSfxPlace);
+                sSwingUntil = (unsigned long)TickCount() + 8;
                 InvalidateColumn(x, y, newZ);
             }
         }
@@ -959,7 +937,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
         Rect blockRect;
 
         for (i = 0; i < kGameNumBlockTypes; i++) {
-            SelectorBlockRect(i, &blockRect);
+            HUD_SlotRect(i, kGameNumBlockTypes, &blockRect);
             if (PtInRect(localPt, &blockRect)) {
                 Sfx_Play(kSfxClick);
                 sBlockType = i;
@@ -1035,25 +1013,29 @@ static Boolean GameWindow_HandleKeyDown(char key)
     case kLeftArrowKey:
     case 'a':
     case 'A':
-        PanCamera(-kGameCameraPanX, 0);
+        sIntentX = -1;
         return true;
 
     case kRightArrowKey:
     case 'd':
     case 'D':
-        PanCamera(kGameCameraPanX, 0);
+        sIntentX = 1;
         return true;
 
     case kUpArrowKey:
     case 'w':
     case 'W':
-        PanCamera(0, -kGameCameraPanY);
+        sIntentY = -1;
         return true;
 
     case kDownArrowKey:
     case 's':
     case 'S':
-        PanCamera(0, kGameCameraPanY);
+        sIntentY = 1;
+        return true;
+
+    case ' ':
+        sJumpHeld = true;
         return true;
 
     default:
@@ -1079,81 +1061,8 @@ static void GameWindow_HandleActivate(Boolean becomingActive)
 /* Append C string s to a Pascal string being built in dst, whose length byte
  * lives at dst[0] and whose current length is *len. No sprintf on a 68000: the
  * whole strip is assembled by hand. */
-static void AppendToStrip(unsigned char *dst, short *len, const char *s, short max)
-{
-    while (*s != '\0' && *len < max) {
-        dst[++(*len)] = (unsigned char)*s++;
-    }
-}
 
 /* "MacCraft" on the left, block and camera readout on the right. */
-static void DrawTitleStrip(void)
-{
-    Rect strip;
-    Str255 text;
-    short i, len;
-    short centreX, centreY;
-
-    strip = sTitleStripRect;
-
-    /* A hairline under the strip, then the two labels. */
-    PenNormal();
-    ForeColor(blackColor);
-    MoveTo(strip.left, strip.bottom);
-    LineTo(strip.right, strip.bottom);
-
-    TextFont(kFontIDGeneva);
-    TextSize(9);
-
-    TextFace(bold);
-    MoveTo(strip.left + 2, strip.top + 11);
-    DrawString("\pMacCraft");
-
-    /* Tile under the middle of the play area. */
-    if (!Iso_Unproject((short)((sDisplayRect.right - sDisplayRect.left) / 2),
-                       (short)((sDisplayRect.bottom - sDisplayRect.top) / 2),
-                       sCamX, sCamY, &centreX, &centreY)) {
-        centreX = 0;
-        centreY = 0;
-    }
-
-    /* "block: grass  cam: 24,24" built by hand: no sprintf on the 68000. The
-     * name is the block under the middle of the view -- the one the selection
-     * box is drawn on -- falling back to the kind a click would place when the
-     * tile is empty. */
-    len = 0;
-    AppendToStrip(text, &len, "block: ", 200);
-    {
-        short top = World_TopZ(centreX, centreY);
-        BlockID under = (top >= 0) ? World_Get(centreX, centreY, top) : 0;
-
-        AppendToStrip(text, &len, Block_Name(under != 0 ? under : (BlockID)(sBlockType + 1)), 200);
-    }
-    AppendToStrip(text, &len, "  cam: ", 200);
-    {
-        Str255 num;
-        short d;
-
-        NumToString(centreX, num);
-        for (d = 1; d <= num[0] && len < 200; d++) {
-            text[++len] = num[d];
-        }
-        if (len < 200) {
-            text[++len] = ',';
-        }
-        NumToString(centreY, num);
-        for (d = 1; d <= num[0] && len < 200; d++) {
-            text[++len] = num[d];
-        }
-    }
-    text[0] = (unsigned char)len;
-
-    TextFace(normal);
-    MoveTo((short)(strip.right - StringWidth(text) - 2), strip.top + 11);
-    DrawString(text);
-
-    TextFace(normal);
-}
 
 /* Render the game window contents. Only called between BeginUpdate/EndUpdate. */
 
@@ -1168,6 +1077,17 @@ static void GameWindow_Render(void)
 
     SetPort(sWindow);
     GetPenState(&savedPen);
+
+    /* The window can be dragged, so the offset used for direct screen writes is
+     * recomputed here rather than captured once at creation. */
+    {
+        Point origin;
+
+        origin.h = 0;
+        origin.v = 0;
+        LocalToGlobal(&origin);
+        Sprite_SetOrigin(origin.h, origin.v);
+    }
 
     /* World drawing is limited to whole tiles, so it covers the display rect;
      * BeginUpdate has already clipped the port to the update region, which is
@@ -1205,10 +1125,15 @@ static void GameWindow_Render(void)
     DetectColor();
     if (sHasColor && Sprite_Ready()) {
         /* Minecraft's sky: one flat blue with flat white clouds, painted through
-         * the pixel path so the colours are exactly what is asked for. */
+         * the pixel path so the colours are exactly what is asked for. Scoped to
+         * the repaint rect: these writes bypass the update clip, so filling the
+         * whole display here would erase the island on every partial
+         * invalidation (a block placement, a hover move). */
         Sprite_BeginFrame();
-        Sprite_FillRect(&sDisplayRect, 0x78A7FFUL);
+        Sprite_SetView(&sRenderRect);
+        Sprite_FillRect(&sRenderRect, 0x78A7FFUL);
         DrawClouds();
+        Sprite_SetView(&sDisplayRect);
         Sprite_EndFrame();
     }
     else {
@@ -1229,21 +1154,22 @@ static void GameWindow_Render(void)
 
         /* Selection box on the surface under the mouse, which is also where a
          * click will act. */
-        if (sHoverValid && sHoverZ > 0) {
+        if (sHoverValid) {
             DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
         }
-        DrawCrosshair();
-        DrawHeldBlock((BlockID)(sBlockType + 1));
+        DrawPlayer();
+        HUD_DrawCrosshair();
+        HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
     }
     else {
         /* A paint that only touches the strip still has to keep the HUD, which
          * lives inside the play area: the world pixels are written directly and
-         * survive, but QuickDraw's clip can suppress these two, so they are
-         * drawn whenever the play area is anywhere in the clip. */
+         * survive, but QuickDraw's clip can suppress these, so they are drawn
+         * whenever the play area is anywhere in the clip. */
         Sprite_BeginFrame();
-        DrawCrosshair();
-        DrawHeldBlock((BlockID)(sBlockType + 1));
+        HUD_DrawCrosshair();
+        HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
     }
 
@@ -1277,15 +1203,21 @@ static void GameWindow_Render(void)
     strip.top = sDisplayRect.bottom;
     EraseRect(&strip);
 
-    DrawTitleStrip();
-
-    /* Display frame, then the selector on top of any remaining spill. */
+    /* Display frame, then the chrome. The HUD draws through the pixel path, so
+     * it needs the screen locked and its view narrowed to the rect it owns. */
     PenNormal();
     PenSize(1, 1);
     ForeColor(blackColor);
     FrameRect(&sDisplayRect);
 
-    DrawBlockSelector();
+    Sprite_BeginFrame();
+    Sprite_SetView(&sTitleStripRect);
+    HUD_DrawStrip(HoveredBlock(),
+                  (BlockID)(sBlockType + 1), sCamX, sCamY);
+    Sprite_SetView(&sBlockSelectorRect);
+    HUD_DrawHotbar((BlockID)(sBlockType + 1), kGameNumBlockTypes);
+    Sprite_SetView(&sDisplayRect);
+    Sprite_EndFrame();
 
     SetPenState(&savedPen);
 }
@@ -1357,6 +1289,11 @@ void GameWindow_HandleEvent(EventRecord *event)
         break;
     }
 
+    UpdateHover();
+    /* Keep the held block's swing animating: nothing else invalidates it. */
+    if (sSwingUntil > (unsigned long)TickCount()) {
+        MarkDirty(&sDisplayRect);
+    }
     FlushDirty();
 }
 
@@ -1390,6 +1327,56 @@ WindowRef GameWindow_GetWindowRef(void)
 }
 
 /* Determine if the window is visible */
+/* Player state for the harness: the simulation is provable, so the harness
+ * asserts on it instead of trusting a picture. */
+Boolean GameWindow_PlayerGrounded(void)
+{
+    return sPlayer.onGround;
+}
+
+short GameWindow_PlayerZ(void)
+{
+    return (short)(sPlayer.z >> 16);
+}
+
+short GameWindow_PlayerRespawns(void)
+{
+    return sPlayer.respawns;
+}
+
+/* Jump once, let it land, and report the highest point reached above the start,
+ * in whole blocks. Drives the same Player_Step the game runs. */
+short GameWindow_PlayerJumpPeakForTest(void)
+{
+    Player save;
+    short start;
+    short peak;
+    short i;
+
+    save = sPlayer;
+    start = (short)(sPlayer.z >> 16);
+    peak = 0;
+
+    for (i = 0; i < 60; i++) {
+        Player_Step(&sPlayer, 0, 0, i == 0);
+        if ((short)(sPlayer.z >> 16) - start > peak) {
+            peak = (short)((short)(sPlayer.z >> 16) - start);
+        }
+    }
+    sPlayer = save;
+    return peak;
+}
+
+/* Rebuild the island and respawn the player, for the Game menu's Reset World. */
+void GameWindow_ResetWorld(void)
+{
+    Scene_BuildIsland();
+    Player_Spawn(&sPlayer, 24, 24, (short)(World_TopZ(24, 24) + 1));
+    CentreOnPlayer();
+    MarkDirty(&sDisplayRect);
+    FlushDirty();
+}
+
 /* Repaint the play area `iterations` times and report how long each phase took,
  * so render cost can be hill-climbed from the harness instead of guessed at.
  * Ticks are 1/60 s. */
@@ -1493,6 +1480,40 @@ void GameWindow_Idle(void)
         if (GetCurrentProcess(&psn) == noErr) {
             SetFrontProcess(&psn);
         }
+    }
+
+    /* Physics runs at a fixed 60 Hz whatever the event rate: gravity must not
+     * depend on how often the user moves the mouse. Catch-up is capped so a long
+     * pause cannot teleport the player. */
+    {
+        unsigned long now = (unsigned long)TickCount();
+        short steps = 0;
+
+        if (sLastPhysicsTick == 0) {
+            sLastPhysicsTick = now;
+        }
+        while (sLastPhysicsTick != now && steps < 3) {
+            Player_Step(&sPlayer, sIntentX, sIntentY, sJumpHeld);
+            sLastPhysicsTick++;
+            steps++;
+        }
+        if (steps > 0) {
+            CentreOnPlayer();
+            MarkDirty(&sDisplayRect);
+            /* A key press is one deliberate nudge, not a held movement. */
+            sIntentX = 0;
+            sIntentY = 0;
+            sJumpHeld = false;
+        }
+    }
+
+    /* Hover is polled here rather than only on events: the app is often behind
+     * the Finder after a Startup Items launch, so it receives no events at all
+     * and GetMouse is the only way to follow the pointer. */
+    UpdateHover();
+    /* Keep the held block's swing animating: nothing else invalidates it. */
+    if (sSwingUntil > (unsigned long)TickCount()) {
+        MarkDirty(&sDisplayRect);
     }
 
     FlushDirty();

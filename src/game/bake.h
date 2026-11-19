@@ -29,8 +29,13 @@
 #define kBakeHeight      16
 #define kBakePixels      (kBakeWidth * kBakeHeight)
 
+/* A side face is 16 wide and, per column, a full block tall: the vertical edges
+ * of the cube are 16 pixels, so the parallelogram sweeps from row 0 on one side
+ * to row 8 on the other, 16 rows deep. Its bounding box is therefore 16x24, not
+ * 16x16 -- a 16x16 box is a half-height face, which is what made every block
+ * read as a squat slab and every side texture look sheared the wrong way. */
 #define kBakeSideWidth   16
-#define kBakeSideHeight  16
+#define kBakeSideHeight  24
 #define kBakeSidePixels  (kBakeSideWidth * kBakeSideHeight)
 
 /* Face indices, matching iso.h / the renderer. */

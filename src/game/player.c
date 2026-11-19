@@ -1,0 +1,360 @@
+/*
+ * player.c - fixed-point platformer physics for the isometric world.
+ *
+ * No floating point, no heap, no Toolbox: this file links into the host
+ * tests and the game alike.  The player is a single box that is moved one
+ * axis at a time (z, then x, then y) so that landing on a surface and
+ * walking into a wall both resolve the same way every tick.
+ *
+ * The only mutable module state is the respawn point recorded by
+ * Player_Spawn.  The game has a single player, so a single point is enough;
+ * Player_Restore never changes it.
+ */
+
+#include "player.h"
+#include "world.h"
+
+/* 0.08 * 65536 == 5242.88, rounded up. */
+#define kPlayerGravity 5243L
+/* 0.42 * 65536 == 27525.12.  Peaks ~1.32 blocks up, so it clears a one-block
+ * step but not a two-block one. */
+#define kPlayerJumpSpeed 27525L
+/* 0.10 * 65536 == 6553.6, rounded up; ten ticks travel 1.00006 blocks. */
+#define kPlayerWalkSpeed 6554L
+/* Terminal velocity: 3.0 blocks per tick. */
+#define kPlayerMaxFall 196608L
+/* Largest movement allowed between collision tests, 0.25 blocks.  At the
+ * terminal velocity this is twelve tests per tick, which cannot skip a
+ * one-block column. */
+#define kPlayerSubStep 16384L
+
+static long sSpawnX;
+static long sSpawnY;
+static long sSpawnZ;
+
+/* Round-down division for fixed point.  C's '/' truncates toward zero, which
+ * would make a cell index for a negative coordinate one too high. */
+static long FloorDiv(long a, long b)
+{
+    long q = a / b;
+
+    if ((a % b) != 0 && ((a < 0) != (b < 0)))
+        q--;
+    return q;
+}
+
+/* First block index touched by a coordinate (inclusive lower edge). */
+static long CellLo(long v)
+{
+    return FloorDiv(v, kPlayerOne);
+}
+
+/* Last block index touched by a coordinate (inclusive upper edge).  The
+ * upper edge itself is open, so a box ending exactly on a block boundary
+ * does not touch the block beyond it. */
+static long CellHi(long v)
+{
+    return FloorDiv(v - 1, kPlayerOne);
+}
+
+static Boolean CellSolid(long bx, long by, long bz)
+{
+    /* Check the grid before calling World_Get so that no access ever leaves
+     * the array, even for a player that has fallen far below the world. */
+    if (bx < 0 || bx >= kWorldX || by < 0 || by >= kWorldY ||
+        bz < 0 || bz >= kWorldZ)
+        return false;
+    return (Boolean)(World_Get((short)bx, (short)by, (short)bz) != 0);
+}
+
+/* Does the box centred at (x,y) with feet at z overlap any solid block? */
+static Boolean BoxHits(long x, long y, long z)
+{
+    long bx0 = CellLo(x - kPlayerHalfWidth);
+    long bx1 = CellHi(x + kPlayerHalfWidth);
+    long by0 = CellLo(y - kPlayerHalfWidth);
+    long by1 = CellHi(y + kPlayerHalfWidth);
+    long bz0 = CellLo(z);
+    long bz1 = CellHi(z + kPlayerHeight);
+    long bx, by, bz;
+
+    for (bz = bz0; bz <= bz1; bz++)
+        for (by = by0; by <= by1; by++)
+            for (bx = bx0; bx <= bx1; bx++)
+                if (CellSolid(bx, by, bz))
+                    return true;
+    return false;
+}
+
+/* Highest block top at or below the feet among the columns the box covers.
+ * Returns -1 when there is nothing underneath.  Scanning all z levels (not
+ * just the top one) keeps an overhang from hiding the floor below it. */
+static long SurfaceBelow(long x, long y, long feet)
+{
+    long bx0 = CellLo(x - kPlayerHalfWidth);
+    long bx1 = CellHi(x + kPlayerHalfWidth);
+    long by0 = CellLo(y - kPlayerHalfWidth);
+    long by1 = CellHi(y + kPlayerHalfWidth);
+    long best = -1;
+    long bx, by, bz;
+
+    for (by = by0; by <= by1; by++) {
+        for (bx = bx0; bx <= bx1; bx++) {
+            for (bz = 0; bz < kWorldZ; bz++) {
+                long top;
+
+                if (!CellSolid(bx, by, bz))
+                    continue;
+                top = (bz + 1) * kPlayerOne;
+                if (top <= feet && top > best)
+                    best = top;
+            }
+        }
+    }
+    return best;
+}
+
+/* Lowest block bottom at or above the player's head, or -1. */
+static long CeilingAbove(long x, long y, long feet)
+{
+    long head = feet + kPlayerHeight;
+    long bx0 = CellLo(x - kPlayerHalfWidth);
+    long bx1 = CellHi(x + kPlayerHalfWidth);
+    long by0 = CellLo(y - kPlayerHalfWidth);
+    long by1 = CellHi(y + kPlayerHalfWidth);
+    long best = -1;
+    long bx, by, bz;
+
+    for (by = by0; by <= by1; by++) {
+        for (bx = bx0; bx <= bx1; bx++) {
+            for (bz = 0; bz < kWorldZ; bz++) {
+                long bottom;
+
+                if (!CellSolid(bx, by, bz))
+                    continue;
+                bottom = bz * kPlayerOne;
+                if (bottom >= head && (best < 0 || bottom < best))
+                    best = bottom;
+            }
+        }
+    }
+    return best;
+}
+
+typedef enum { kAxisX = 0, kAxisY = 1 } Axis;
+
+/* Nearest blocking face along one horizontal axis for the destination box.
+ * direction is +1 or -1; positive movement stops at the smallest block face,
+ * negative movement at the largest. */
+static Boolean ScanFace(Axis axis, long x, long y, long z, int direction,
+                        long *face)
+{
+    long bx0 = CellLo(x - kPlayerHalfWidth);
+    long bx1 = CellHi(x + kPlayerHalfWidth);
+    long by0 = CellLo(y - kPlayerHalfWidth);
+    long by1 = CellHi(y + kPlayerHalfWidth);
+    long bz0 = CellLo(z);
+    long bz1 = CellHi(z + kPlayerHeight);
+    Boolean found = false;
+    long bx, by, bz;
+
+    for (bz = bz0; bz <= bz1; bz++) {
+        for (by = by0; by <= by1; by++) {
+            for (bx = bx0; bx <= bx1; bx++) {
+                long column;
+                long candidate;
+
+                if (!CellSolid(bx, by, bz))
+                    continue;
+                column = (axis == kAxisX) ? bx : by;
+                candidate = (direction > 0) ? column * kPlayerOne
+                                            : (column + 1) * kPlayerOne;
+                if (!found ||
+                    (direction > 0 ? candidate < *face : candidate > *face)) {
+                    *face = candidate;
+                    found = true;
+                }
+            }
+        }
+    }
+    return found;
+}
+
+static long ClampStep(long remaining)
+{
+    if (remaining > kPlayerSubStep)
+        return kPlayerSubStep;
+    if (remaining < -kPlayerSubStep)
+        return -kPlayerSubStep;
+    return remaining;
+}
+
+static void SolveZ(Player *p)
+{
+    long remaining = p->vz;
+
+    while (remaining != 0) {
+        long step = ClampStep(remaining);
+        long nz = p->z + step;
+
+        if (!BoxHits(p->x, p->y, nz)) {
+            p->z = nz;
+            remaining -= step;
+            continue;
+        }
+
+        if (step < 0) {
+            long surface = SurfaceBelow(p->x, p->y, p->z);
+
+            /* Snap to the highest floor the box is standing over.  Because
+             * the sub-step is short, that floor is at most one block below
+             * the feet, so this cannot teleport the player down a shaft. */
+            if (surface >= 0 && surface <= p->z) {
+                p->z = surface;
+                p->onGround = true;
+            }
+        } else {
+            long ceiling = CeilingAbove(p->x, p->y, p->z);
+
+            if (ceiling >= 0)
+                p->z = ceiling - kPlayerHeight;
+            p->onGround = false;
+        }
+        p->vz = 0;
+        break;
+    }
+}
+
+static void SolveX(Player *p)
+{
+    long remaining = p->vx;
+
+    while (remaining != 0) {
+        long step = ClampStep(remaining);
+        long nx = p->x + step;
+        long face;
+
+        if (!BoxHits(nx, p->y, p->z)) {
+            p->x = nx;
+            remaining -= step;
+            continue;
+        }
+
+        if (ScanFace(kAxisX, nx, p->y, p->z, step > 0 ? 1 : -1, &face)) {
+            if (step > 0)
+                p->x = face - kPlayerHalfWidth;
+            else
+                p->x = face + kPlayerHalfWidth;
+        }
+        p->vx = 0;
+        break;
+    }
+}
+
+static void SolveY(Player *p)
+{
+    long remaining = p->vy;
+
+    while (remaining != 0) {
+        long step = ClampStep(remaining);
+        long ny = p->y + step;
+        long face;
+
+        if (!BoxHits(p->x, ny, p->z)) {
+            p->y = ny;
+            remaining -= step;
+            continue;
+        }
+
+        if (ScanFace(kAxisY, p->x, ny, p->z, step > 0 ? 1 : -1, &face)) {
+            if (step > 0)
+                p->y = face - kPlayerHalfWidth;
+            else
+                p->y = face + kPlayerHalfWidth;
+        }
+        p->vy = 0;
+        break;
+    }
+}
+
+static void Respawn(Player *p)
+{
+    p->x = sSpawnX;
+    p->y = sSpawnY;
+    p->z = sSpawnZ;
+    p->vx = 0;
+    p->vy = 0;
+    p->vz = 0;
+    p->onGround = false;
+    p->respawns++;
+}
+
+void Player_Spawn(Player *p, short x, short y, short z)
+{
+    /* x and y name a block, so the feet go in the middle of that block; z is
+     * already a feet height, so it is used as-is.  The respawn point is the
+     * module's only mutable state. */
+    sSpawnX = (long)x * kPlayerOne + kPlayerOne / 2;
+    sSpawnY = (long)y * kPlayerOne + kPlayerOne / 2;
+    sSpawnZ = (long)z * kPlayerOne;
+
+    p->x = sSpawnX;
+    p->y = sSpawnY;
+    p->z = sSpawnZ;
+    p->vx = 0;
+    p->vy = 0;
+    p->vz = 0;
+    p->onGround = false;
+    p->respawns = 0;
+}
+
+void Player_Step(Player *p, short moveX, short moveY, Boolean jump)
+{
+    long speed = kPlayerWalkSpeed;
+
+    /* Diagonal input would otherwise move sqrt(2) times as fast; three
+     * quarters per axis keeps a diagonal grid advance slower than a
+     * straight one. */
+    if (moveX != 0 && moveY != 0)
+        speed = (kPlayerWalkSpeed * 3) / 4;
+
+    p->vx = (long)moveX * speed;
+    p->vy = (long)moveY * speed;
+
+    if (p->onGround) {
+        if (jump) {
+            p->vz = kPlayerJumpSpeed;
+            p->onGround = false; /* leave the floor this tick */
+        } else {
+            p->vz = 0; /* grounded and not jumping: no falling */
+        }
+    } else {
+        p->vz -= kPlayerGravity;
+        if (p->vz < -kPlayerMaxFall)
+            p->vz = -kPlayerMaxFall;
+    }
+
+    SolveZ(p);
+
+    /* Fell out of the bottom of the world. */
+    if (p->z < 0) {
+        Respawn(p);
+        return;
+    }
+
+    SolveX(p);
+    SolveY(p);
+
+    /* Walking off a ledge leaves onGround set until the box no longer covers
+     * a surface at exactly the feet height.  Checked after the horizontal
+     * move so the flag is false on the very tick the player leaves. */
+    if (p->onGround) {
+        if (SurfaceBelow(p->x, p->y, p->z) != p->z)
+            p->onGround = false;
+    }
+}
+
+void Player_Restore(Player *p, const Player *saved)
+{
+    *p = *saved;
+}

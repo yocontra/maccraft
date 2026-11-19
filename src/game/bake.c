@@ -77,16 +77,7 @@ short Bake_FaceHeight(short face)
 
 /* Is (x, y) inside the side parallelogram?  Derived from the quad corners;
  * see the file comment.  The top face uses the shear mapping instead. */
-static Boolean SideInside(short x, short y, short face)
-{
-    short twiceY = (short)(2 * y);
 
-    if (face == kBakeFaceLeft) {
-        return (Boolean)(twiceY >= x && twiceY <= x + kBakeSideWidth - 1);
-    }
-    return (Boolean)(twiceY >= kBakeSideWidth - x &&
-                     twiceY <= 2 * kBakeSideWidth - 1 - x);
-}
 
 static void BakeTop(const unsigned char *tex, short factor, Boolean shade,
                     unsigned char *out, unsigned char *mask)
@@ -111,21 +102,23 @@ static void BakeTop(const unsigned char *tex, short factor, Boolean shade,
 static void BakeSide(const unsigned char *tex, short face, short factor,
                      Boolean shade, unsigned char *out, unsigned char *mask)
 {
-    short x, y;
+    short x, column;
 
-    for (y = 0; y < kBakeSideHeight; y++) {
-        for (x = 0; x < kBakeSideWidth; x++) {
-            short sx;
-            unsigned char v;
+    /* Column x of the face starts at row `top` and is 16 texels deep: the
+     * texture maps 1:1 onto the face, and the shear is in the geometry, not in
+     * the sampling. Left face rises to the right, right face falls. */
+    for (x = 0; x < kBakeSideWidth; x++) {
+        short top = (face == kBakeFaceRight) ? (short)((kBakeSideWidth - 1 - x) / 2)
+                                             : (short)(x / 2);
+        short sx = (face == kBakeFaceRight) ? (short)(kBakeSideWidth - 1 - x) : x;
 
-            if (!SideInside(x, y, face)) {
+        for (column = 0; column < kTexSide; column++) {
+            short y = (short)(top + column);
+            unsigned char v = tex[column * kTexSide + sx];
+
+            if (y >= kBakeSideHeight) {
                 continue;
             }
-
-            /* Right face mirrors the texture, not the geometry: the band is
-             * already the mirrored quad, sampling tex[15-x] wraps the art. */
-            sx = (face == kBakeFaceRight) ? (short)(kBakeSideWidth - 1 - x) : x;
-            v = tex[y * kTexSide + sx];
             if (shade) {
                 v = Art_ShadeIndex(v, factor);
             }
@@ -140,8 +133,6 @@ static void BakeInto(const unsigned char *tex, short face, short factor,
 {
     ClearFace(face, out, mask);
 
-    /* Unknown faces fall back to the top face, matching the size accessors:
-     * a corrupt call still clears and fills a complete sprite. */
     if (face == kBakeFaceLeft || face == kBakeFaceRight) {
         BakeSide(tex, face, factor, shade, out, mask);
     }

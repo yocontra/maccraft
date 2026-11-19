@@ -1,0 +1,342 @@
+/*
+ * test_player.c - host tests for the fixed-point player simulation.
+ *
+ * The world is built by the test itself: a flat floor where needed, plus the
+ * walls, steps and single blocks each case calls for.  Everything is checked
+ * through the Player struct so the tests do not depend on player.c internals.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "player.h"
+#include "world.h"
+
+static int sFailures;
+
+#define CHECK(cond)                                                          \
+    do {                                                                     \
+        if (!(cond)) {                                                       \
+            fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, \
+                    #cond);                                                  \
+            sFailures++;                                                     \
+        }                                                                    \
+    } while (0)
+
+/* Fixed point to blocks, for readable tolerances. */
+static double Blocks(long v)
+{
+    return (double)v / (double)kPlayerOne;
+}
+
+/* Local absolute value: keeps the test free of libm so the same command works
+ * on hosts that do not link -lm. */
+static double AbsD(double v)
+{
+    return (v < 0.0) ? -v : v;
+}
+
+static void ClearWorld(void)
+{
+    short x, y, z;
+
+    /* World_Reset gives a defined starting point; then wipe the plateau so
+     * each case starts from genuinely empty space. */
+    World_Reset();
+    for (x = 0; x < kWorldX; x++)
+        for (y = 0; y < kWorldY; y++)
+            for (z = 0; z < kWorldZ; z++)
+                World_Set(x, y, z, 0);
+}
+
+static void FillGround(short x0, short x1, short y0, short y1, short z)
+{
+    short x, y;
+
+    for (x = x0; x <= x1; x++)
+        for (y = y0; y <= y1; y++)
+            World_Set(x, y, z, 1);
+}
+
+/* 1. A player above solid ground falls, lands exactly on the surface and
+ *    stays there. */
+static void TestStanding(void)
+{
+    Player p;
+    int i;
+
+    ClearWorld();
+    World_Set(24, 24, 0, 1);
+
+    Player_Spawn(&p, 24, 24, 4);
+    for (i = 0; i < 20; i++) {
+        Player_Step(&p, 0, 0, false);
+        CHECK(Blocks(p.z) >= 1.0);
+    }
+    CHECK(p.onGround);
+    CHECK(p.z == kPlayerOne);
+    CHECK(AbsD(Blocks(p.x) - 24.5) < 1e-6);
+    CHECK(AbsD(Blocks(p.y) - 24.5) < 1e-6);
+    CHECK(p.respawns == 0);
+
+    /* Spawning with the feet exactly on the surface must settle on the very
+     * next tick without sinking below it. */
+    Player_Spawn(&p, 24, 24, 1);
+    for (i = 0; i < 10; i++) {
+        Player_Step(&p, 0, 0, false);
+        CHECK(p.z == kPlayerOne);
+    }
+    CHECK(p.onGround);
+}
+
+/* 2. Straight walking covers one block in ten ticks; diagonal walking is
+ *    slower per axis. */
+static void TestWalking(void)
+{
+    Player p;
+    long startX;
+    int i;
+
+    ClearWorld();
+    FillGround(0, 47, 0, 47, 0);
+
+    Player_Spawn(&p, 10, 10, 1);
+    startX = p.x;
+    for (i = 0; i < 10; i++)
+        Player_Step(&p, 1, 0, false);
+    CHECK(p.onGround);
+    CHECK(p.z == kPlayerOne);
+    CHECK(AbsD(Blocks(p.x - startX) - 1.0) <= 0.02);
+
+    Player_Spawn(&p, 10, 10, 1);
+    startX = p.x;
+    for (i = 0; i < 10; i++)
+        Player_Step(&p, 1, 1, false);
+    CHECK(AbsD(Blocks(p.x - startX) - 0.75) <= 0.02);
+    CHECK(Blocks(p.x - startX) < 0.98);
+    CHECK(p.onGround);
+}
+
+/* 3. A jump peaks between one and two blocks and comes back down. */
+static void TestJumping(void)
+{
+    Player p;
+    long start, peak;
+    int i;
+
+    ClearWorld();
+    FillGround(0, 47, 0, 47, 0);
+
+    Player_Spawn(&p, 10, 10, 1);
+    /* Spawning leaves the player ungrounded; settle for a few ticks so the
+     * jump is taken from a real floor contact. */
+    for (i = 0; i < 5; i++)
+        Player_Step(&p, 0, 0, false);
+    CHECK(p.onGround);
+
+    start = p.z;
+    peak = p.z;
+
+    Player_Step(&p, 0, 0, true);
+    if (p.z > peak)
+        peak = p.z;
+
+    for (i = 0; i < 60; i++) {
+        Player_Step(&p, 0, 0, false);
+        if (p.z > peak)
+            peak = p.z;
+    }
+
+    CHECK(Blocks(peak - start) >= 1.0);
+    CHECK(Blocks(peak - start) < 2.0);
+    CHECK(p.onGround);
+    CHECK(p.z == start);
+}
+
+/* 4. Walking into a one-block step while jumping climbs it; a two-block step
+ *    is too tall. */
+static void BuildStep(short stepHeight)
+{
+    ClearWorld();
+    FillGround(20, 40, 20, 28, 0);
+    /* The step is a single column in line with the player's y footprint. */
+    if (stepHeight >= 1)
+        World_Set(26, 24, 1, 1);
+    if (stepHeight >= 2)
+        World_Set(26, 24, 2, 1);
+}
+
+static void TestStepUp(void)
+{
+    Player p;
+    long peak;
+    int i;
+    int climbed;
+
+    BuildStep(1);
+    Player_Spawn(&p, 24, 24, 1);
+    climbed = 0;
+    for (i = 0; i < 200 && !climbed; i++) {
+        Player_Step(&p, 1, 0, true);
+        if (p.onGround && p.z == 2 * kPlayerOne)
+            climbed = 1;
+    }
+    CHECK(climbed);
+
+    BuildStep(2);
+    Player_Spawn(&p, 24, 24, 1);
+    peak = p.z;
+    for (i = 0; i < 200; i++) {
+        Player_Step(&p, 1, 0, true);
+        if (p.z > peak)
+            peak = p.z;
+    }
+    CHECK(Blocks(peak) < 3.0);
+    CHECK(AbsD(Blocks(p.x) - 25.7) < 0.02);
+}
+
+/* 5. A two-block wall stops the player at its face while staying grounded. */
+static void TestWalls(void)
+{
+    Player p;
+    int i;
+
+    ClearWorld();
+    FillGround(20, 40, 20, 28, 0);
+    World_Set(26, 24, 1, 1);
+    World_Set(26, 24, 2, 1);
+
+    Player_Spawn(&p, 24, 24, 1);
+    for (i = 0; i < 60; i++)
+        Player_Step(&p, 1, 0, false);
+
+    CHECK(AbsD(Blocks(p.x) - 25.7) < 0.02);
+    CHECK(p.onGround);
+    CHECK(p.z == kPlayerOne);
+}
+
+/* 6. Walking off a platform starts a fall, and hitting the bottom respawns at
+ *    the recorded spawn point. */
+static void TestFallingOff(void)
+{
+    Player p;
+    long spawnX, spawnY, spawnZ;
+    int i;
+    int fellAt = -1;
+
+    ClearWorld();
+    FillGround(20, 25, 22, 26, 0);
+
+    Player_Spawn(&p, 22, 24, 1);
+    spawnX = p.x;
+    spawnY = p.y;
+    spawnZ = p.z;
+
+    for (i = 0; i < 80; i++) {
+        Player_Step(&p, 1, 0, false);
+        if (!p.onGround) {
+            fellAt = i;
+            break;
+        }
+    }
+
+    CHECK(fellAt >= 0);
+    /* The floor ends at x == 26; the box is 0.6 wide, so support is lost the
+     * tick its left edge crosses 26.0, i.e. around x == 26.3.  That is the
+     * same tick onGround clears. */
+    CHECK(fellAt >= 0 && fellAt <= 45);
+    CHECK(Blocks(p.x) >= 26.2 && Blocks(p.x) <= 26.4);
+    CHECK(p.respawns == 0);
+
+    for (i = 0; i < 80 && p.respawns == 0; i++)
+        Player_Step(&p, 0, 0, false);
+
+    CHECK(p.respawns == 1);
+    CHECK(p.x == spawnX);
+    CHECK(p.y == spawnY);
+    CHECK(p.z == spawnZ);
+    CHECK(p.vx == 0 && p.vy == 0 && p.vz == 0);
+    CHECK(!p.onGround);
+}
+
+/* 7. A terminal-velocity fall onto a single block lands on top of it. */
+static void TestNoTunnelling(void)
+{
+    Player p;
+    int i;
+
+    ClearWorld();
+    World_Set(24, 24, 0, 1);
+
+    Player_Spawn(&p, 24, 24, 7);
+    for (i = 0; i < 60; i++)
+        Player_Step(&p, 0, 0, false);
+
+    CHECK(p.onGround);
+    CHECK(p.z == kPlayerOne);
+    CHECK(p.respawns == 0);
+}
+
+/* 8. Identical state plus identical inputs gives identical results. */
+static void RunPattern(Player *q)
+{
+    int i;
+
+    for (i = 0; i < 40; i++) {
+        short moveX = (short)((i % 3) - 1);
+        short moveY = (short)(((i / 3) % 3) - 1);
+        Boolean jump = (Boolean)((i % 7) == 0);
+
+        Player_Step(q, moveX, moveY, jump);
+    }
+}
+
+static void TestDeterminism(void)
+{
+    Player p, a, b;
+    int i;
+
+    ClearWorld();
+    FillGround(8, 40, 8, 40, 0);
+
+    Player_Spawn(&p, 10, 10, 1);
+    for (i = 0; i < 7; i++)
+        Player_Step(&p, (short)((i % 3) - 1), (short)(((i + 1) % 3) - 1),
+                    (Boolean)(i % 5 == 0));
+
+    a = p;
+    b = p;
+    RunPattern(&a);
+    RunPattern(&b);
+
+    CHECK(a.x == b.x && a.y == b.y && a.z == b.z);
+    CHECK(a.vx == b.vx && a.vy == b.vy && a.vz == b.vz);
+    CHECK(a.onGround == b.onGround);
+    CHECK(a.respawns == b.respawns);
+
+    /* Player_Restore must reproduce that same state exactly. */
+    Player_Restore(&b, &p);
+    CHECK(b.x == p.x && b.y == p.y && b.z == p.z);
+    CHECK(b.vx == p.vx && b.vy == p.vy && b.vz == p.vz);
+    CHECK(b.onGround == p.onGround);
+    CHECK(b.respawns == p.respawns);
+}
+
+int main(void)
+{
+    TestStanding();
+    TestWalking();
+    TestJumping();
+    TestStepUp();
+    TestWalls();
+    TestFallingOff();
+    TestNoTunnelling();
+    TestDeterminism();
+
+    if (sFailures != 0) {
+        fprintf(stderr, "%d player check(s) failed\n", sFailures);
+        return EXIT_FAILURE;
+    }
+    printf("test_player: all checks passed\n");
+    return EXIT_SUCCESS;
+}

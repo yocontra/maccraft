@@ -25,10 +25,13 @@
 #include "sprite_sheet.h"
 #include "../game/art.h"
 #include "../game/bake.h"
+#include "../game/dither.h"
 
 #define kSpriteKinds 14
 #define kSpriteBands (kSpriteKinds * 3 * kSpriteShades)
-#define kSpriteRows  (kSpriteBands * kSpriteH)
+/* A band is as tall as the tallest face: the top is 16 rows, a side 24. */
+#define kSpriteBandH 24
+#define kSpriteRows  (kSpriteBands * kSpriteBandH)
 #define kMaskRowBytes 4
 
 static unsigned char sSheet[kSpriteRows * kSpriteW];
@@ -38,8 +41,8 @@ static unsigned char sMaskSheet[kSpriteRows * kMaskRowBytes];
  * is a single contiguous run, so the draw loop needs no mask scan at all: it
  * reads two bytes and copies. Scanning the mask per row per face was a third of
  * the frame's work. */
-static unsigned char sRunFirst[kSpriteBands * kSpriteH];
-static unsigned char sRunLast[kSpriteBands * kSpriteH];
+static unsigned char sRunFirst[kSpriteBands * kSpriteBandH];
+static unsigned char sRunLast[kSpriteBands * kSpriteBandH];
 static unsigned char sDevice[kArtPaletteEntries];
 
 /* The art palette as 8-bit RGB triplets. The guest runs at 32-bit direct colour
@@ -222,10 +225,18 @@ static short RowShade(short face, short row, short height, short shade)
 static void PutBand(short band, short width, short height, short shade, short face)
 {
     short row, col;
-    Ptr colourBase = (Ptr)sSheet + (long)band * kSpriteH * kSpriteW;
-    Ptr maskBase = (Ptr)sMaskSheet + (long)band * kSpriteH * kMaskRowBytes;
+    Ptr colourBase = (Ptr)sSheet + (long)band * kSpriteBandH * kSpriteW;
+    Ptr maskBase = (Ptr)sMaskSheet + (long)band * kSpriteBandH * kMaskRowBytes;
 
     for (row = 0; row < height; row++) {
+        /* Continuous shade in sixteenths: the band's own step, darker towards
+         * the base of a side face. The fractional part is spent by ordered
+         * dithering between two ramp steps, which is how four palette steps
+         * produce a smooth gradient instead of three visible bands. */
+        short shadeX16 = (short)(shade * 16 + (face != 0 ? (row * 48) / height : 0));
+        short step = (short)(shadeX16 / 16);
+        short fraction = (short)(shadeX16 % 16);
+
         Ptr src = sPixels + (long)row * width;
         Ptr cov = sPixelMask + (long)row * width;
         Ptr dst = colourBase + (long)row * kSpriteW;
@@ -241,7 +252,20 @@ static void PutBand(short band, short width, short height, short shade, short fa
             for (col = 0; col < width; col++) {
                 unsigned char index = src[col];
 
-                dst[col] = sDevice[index < kArtPaletteEntries ? index : 0];
+                /* Shade AND contact gradient: the shade band picks the ramp
+                 * step and RowShade darkens it towards the base of a side face.
+                 * Without this every band was identical and the whole lighting
+                 * model never reached the screen. */
+                short useStep = step;
+
+                if (fraction > 0 && Dither_On(col, row, fraction)) {
+                    useStep = (short)(step + 1);
+                }
+                if (useStep >= kSpriteShades) {
+                    useStep = kSpriteShades - 1;
+                }
+                index = sShadeMap[useStep][index < kArtPaletteEntries ? index : 0];
+                dst[col] = sDevice[index];
                 if (cov[col]) {
                     mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
                     if (first < 0) {
@@ -250,8 +274,8 @@ static void PutBand(short band, short width, short height, short shade, short fa
                     last = col;
                 }
             }
-            sRunFirst[band * kSpriteH + row] = (unsigned char)(first < 0 ? 0 : first);
-            sRunLast[band * kSpriteH + row] = (unsigned char)(last < 0 ? 0 : last);
+            sRunFirst[band * kSpriteBandH + row] = (unsigned char)(first < 0 ? 0 : first);
+            sRunLast[band * kSpriteBandH + row] = (unsigned char)(last < 0 ? 0 : last);
         }
     }
 }
@@ -267,7 +291,10 @@ Boolean Sprite_Init(void)
     if (gd == NULL || (*gd)->gdPMap == NULL) {
         return false;
     }
-    if ((*(*gd)->gdPMap)->pixelSize <= 1) {
+    /* Only the 32-bit path is implemented. On any other depth the direct writer
+     * would step four bytes per pixel through a narrower buffer, so the whole
+     * sprite layer stands down and the QuickDraw renderer takes over. */
+    if ((*(*gd)->gdPMap)->pixelSize != 32) {
         return false;
     }
 
@@ -303,6 +330,8 @@ Boolean Sprite_Ready(void)
  * three quarters of the drawing overhead on this machine. */
 static Ptr sScreenBase = NULL;
 static short sScreenRowBytes = 0;
+static short sScreenWidth = 1024;
+static short sScreenHeight = 768;
 
 void Sprite_BeginFrame(void)
 {
@@ -317,6 +346,11 @@ void Sprite_BeginFrame(void)
     }
     sScreenBase = (*(*gd)->gdPMap)->baseAddr;
     sScreenRowBytes = (short)((*(*gd)->gdPMap)->rowBytes & 0x3FFF);
+    sScreenHeight = (short)((*gd)->gdRect.bottom - (*gd)->gdRect.top);
+    sScreenWidth = (short)(sScreenRowBytes / 4);
+    if (sScreenWidth > (short)((*gd)->gdRect.right - (*gd)->gdRect.left)) {
+        sScreenWidth = (short)((*gd)->gdRect.right - (*gd)->gdRect.left);
+    }
 }
 
 void Sprite_EndFrame(void)
@@ -349,12 +383,12 @@ void Sprite_FillRect(const Rect *r, unsigned long rgb)
     for (y = (short)(r->top + sOriginY); y < (short)(r->bottom + sOriginY); y++) {
         unsigned long *line;
 
-        if (y < viewTop || y >= viewBottom) {
+        if (y < viewTop || y >= viewBottom || y < 0 || y >= sScreenHeight) {
             continue;
         }
         line = (unsigned long *)(sScreenBase + (long)y * sScreenRowBytes);
         for (x = (short)(r->left + sOriginX); x < (short)(r->right + sOriginX); x++) {
-            if (x < viewLeft || x >= viewRight) {
+            if (x < viewLeft || x >= viewRight || x < 0 || x >= sScreenWidth) {
                 continue;
             }
             line[x] = rgb;
@@ -433,6 +467,12 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
     if (originX >= viewRight || (short)(originX + width) <= viewLeft) {
         return;
     }
+    if (originY >= sScreenHeight || (short)(originX + width) <= 0) {
+        return;
+    }
+    if (originX >= sScreenWidth) {
+        return;
+    }
     if (originY >= viewBottom || (short)(originY + height) <= viewTop) {
         return;
     }
@@ -450,7 +490,7 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
         return;
     }
 
-    bandStart = (short)(band * kSpriteH);
+    bandStart = (short)(band * kSpriteBandH);
     bandPixels = (Ptr)sSheet + (long)bandStart * kSpriteW;
     /* One multiply for the first row, then the pointer walks: the old code did a
      * multiply per row per face, which is 32,000 multiplies a frame. */
@@ -464,6 +504,11 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
         for (row = firstRow; row < lastRow; row++) {
             short srcRow = (short)(bandStart + row);
             short x0 = (short)(originX + sRunFirst[srcRow] * 2);
+            short dstRow = (short)(originY + row * 2);
+
+            if (dstRow < 0 || (short)(dstRow + 1) >= sScreenHeight) {
+                continue;
+            }
             short x1 = (short)(originX + (sRunLast[srcRow] + 1) * 2);
             const unsigned char *p;
             unsigned long *line;
@@ -479,7 +524,7 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
                 continue;
             }
             p = bandPixels + (long)row * kSpriteW;
-            line = (unsigned long *)(sScreenBase + (long)(originY + row * 2) * sScreenRowBytes) + x0;
+            line = (unsigned long *)(sScreenBase + (long)dstRow * sScreenRowBytes) + x0;
             line2 = (unsigned long *)((Ptr)line + sScreenRowBytes);
             for (col = x0; col < x1; col++, line++, line2++) {
                 unsigned long word = sPixel32[p[(col - originX) >> 1]];

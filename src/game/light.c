@@ -84,6 +84,124 @@ short Light_Occlusion(short x, short y, short z, short face)
     return (short)(kLightMax - count * kOccluderStep);
 }
 
+/* A face corner has three possible occluders.  Two of them box the corner in
+   completely, one leaves it half lit, none leaves it open.  Counting the
+   diagonal as an occluder as well is deliberate: a block tucked diagonally
+   against the corner also blocks the light that would reach it, and this is
+   the version of the rule that produces the continuous dark seam rather than
+   four isolated dark spots. */
+static short CornerValue(short solid1, short solid2, short solid3)
+{
+    short solid = solid1 + solid2 + solid3;
+
+    if (solid >= 2)
+        return 0;
+    if (solid == 1)
+        return 128;
+    return kLightMax;
+}
+
+void Light_FaceCorners(short x, short y, short z, short face,
+                       short out[kLightCorners])
+{
+    if (face == kLightFaceTop) {
+        /* One level up, the two edge cells and the diagonal that meet each
+           corner of the top diamond. */
+        out[0] = CornerValue(SolidAt(x - 1, y, z + 1),
+                             SolidAt(x, y - 1, z + 1),
+                             SolidAt(x - 1, y - 1, z + 1));
+        out[1] = CornerValue(SolidAt(x + 1, y, z + 1),
+                             SolidAt(x, y - 1, z + 1),
+                             SolidAt(x + 1, y - 1, z + 1));
+        out[2] = CornerValue(SolidAt(x + 1, y, z + 1),
+                             SolidAt(x, y + 1, z + 1),
+                             SolidAt(x + 1, y + 1, z + 1));
+        out[3] = CornerValue(SolidAt(x - 1, y, z + 1),
+                             SolidAt(x, y + 1, z + 1),
+                             SolidAt(x - 1, y + 1, z + 1));
+        return;
+    }
+
+    if (face == kLightFaceLeft) {
+        /* Outward normal +y: all occluders sit one row in front.  Each side
+           corner takes the neighbour beside it at the face's own level, the
+           neighbour above (or below) it in front, and the diagonal between
+           them. */
+        out[0] = CornerValue(SolidAt(x - 1, y + 1, z),
+                             SolidAt(x, y + 1, z + 1),
+                             SolidAt(x - 1, y + 1, z + 1));
+        out[1] = CornerValue(SolidAt(x + 1, y + 1, z),
+                             SolidAt(x, y + 1, z + 1),
+                             SolidAt(x + 1, y + 1, z + 1));
+        out[2] = CornerValue(SolidAt(x + 1, y + 1, z),
+                             SolidAt(x, y + 1, z - 1),
+                             SolidAt(x + 1, y + 1, z - 1));
+        out[3] = CornerValue(SolidAt(x - 1, y + 1, z),
+                             SolidAt(x, y + 1, z - 1),
+                             SolidAt(x - 1, y + 1, z - 1));
+        return;
+    }
+
+    /* Right face, outward normal +x; unknown faces share it, as they do for
+       Light_FaceFactor. */
+    out[0] = CornerValue(SolidAt(x + 1, y - 1, z),
+                         SolidAt(x + 1, y, z + 1),
+                         SolidAt(x + 1, y - 1, z + 1));
+    out[1] = CornerValue(SolidAt(x + 1, y + 1, z),
+                         SolidAt(x + 1, y, z + 1),
+                         SolidAt(x + 1, y + 1, z + 1));
+    out[2] = CornerValue(SolidAt(x + 1, y + 1, z),
+                         SolidAt(x + 1, y, z - 1),
+                         SolidAt(x + 1, y + 1, z - 1));
+    out[3] = CornerValue(SolidAt(x + 1, y - 1, z),
+                         SolidAt(x + 1, y, z - 1),
+                         SolidAt(x + 1, y - 1, z - 1));
+}
+
+static short ClampCorner(short value)
+{
+    if (value < 0)
+        return 0;
+    if (value > kLightMax)
+        return kLightMax;
+    return value;
+}
+
+short Light_SampleCorners(const short corners[kLightCorners],
+                          short u, short v)
+{
+    int left, right, top, bottom;
+    int sum;
+
+    /* The far corner is at 255 on each axis, not 256, so the sample is exact
+       at all four corners; intermediate pixels are then at most half a
+       percent off a perfect bilinear position, which is invisible and keeps
+       the arithmetic small enough for a 68000. */
+    if (u < 0)
+        u = 0;
+    if (u > 255)
+        u = 255;
+    if (v < 0)
+        v = 0;
+    if (v > 255)
+        v = 255;
+
+    left = 255 - u;
+    right = u;
+    top = 255 - v;
+    bottom = v;
+
+    /* Bilinear interpolation.  Each weight is at most 255*255 = 65025 and
+       each corner at most 256, so the sum stays well inside 32 bits.  The
+       32512 is half of that denominator, so the division rounds to nearest. */
+    sum = ClampCorner(corners[0]) * left * top
+        + ClampCorner(corners[1]) * right * top
+        + ClampCorner(corners[2]) * right * bottom
+        + ClampCorner(corners[3]) * left * bottom;
+
+    return (short)((sum + 32512) / 65025);
+}
+
 LightColor Light_Shade(LightColor in, short factor)
 {
     LightColor out;

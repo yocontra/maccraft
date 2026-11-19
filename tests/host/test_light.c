@@ -217,6 +217,154 @@ static void TestCombine(void)
     }
 }
 
+static void TestFaceCornersOpen(void)
+{
+    short corners[kLightCorners];
+    short face, i;
+
+    ResetEmptyWorld();
+    CHECK(World_Set(24, 24, 1, 1));
+
+    for (face = 0; face < 3; face++) {
+        Light_FaceCorners(24, 24, 1, face, corners);
+        for (i = 0; i < kLightCorners; i++) {
+            CHECK(corners[i] == kLightMax);
+        }
+    }
+
+    /* Outside the world nothing occludes either edge block. */
+    Light_FaceCorners((short)-1, (short)-1, 0, kLightFaceTop, corners);
+    for (i = 0; i < kLightCorners; i++)
+        CHECK(corners[i] == kLightMax);
+}
+
+static void TestFaceCornersTop(void)
+{
+    short corners[kLightCorners];
+
+    ResetEmptyWorld();
+    CHECK(World_Set(24, 24, 1, 1));
+
+    /* (23,24,2) touches the top face's top corner and its left corner. */
+    CHECK(World_Set(23, 24, 2, 1));
+    Light_FaceCorners(24, 24, 1, kLightFaceTop, corners);
+    CHECK(corners[0] == 128);
+    CHECK(corners[1] == 256);
+    CHECK(corners[2] == 256);
+    CHECK(corners[3] == 128);
+
+    /* A second neighbour boxes the top corner in completely and leaves the
+       right corner half lit. */
+    CHECK(World_Set(24, 23, 2, 1));
+    Light_FaceCorners(24, 24, 1, kLightFaceTop, corners);
+    CHECK(corners[0] == 0);
+    CHECK(corners[1] == 128);
+    CHECK(corners[2] == 256);
+    CHECK(corners[3] == 128);
+
+    /* A solid cell directly above the block would hide the whole face; it is
+       not part of the corner samples and must not change them. */
+    CHECK(World_Set(24, 24, 2, 1));
+    Light_FaceCorners(24, 24, 1, kLightFaceTop, corners);
+    CHECK(corners[0] == 0);
+    CHECK(corners[1] == 128);
+    CHECK(corners[2] == 256);
+    CHECK(corners[3] == 128);
+}
+
+static void TestFaceCornersSides(void)
+{
+    short corners[kLightCorners];
+
+    /* Left face, outward normal +y. */
+    ResetEmptyWorld();
+    CHECK(World_Set(24, 24, 1, 1));
+    CHECK(World_Set(23, 25, 1, 1));
+    Light_FaceCorners(24, 24, 1, kLightFaceLeft, corners);
+    CHECK(corners[0] == 128);
+    CHECK(corners[1] == 256);
+    CHECK(corners[2] == 256);
+    CHECK(corners[3] == 128);
+
+    CHECK(World_Set(24, 25, 2, 1));
+    Light_FaceCorners(24, 24, 1, kLightFaceLeft, corners);
+    CHECK(corners[0] == 0);
+    CHECK(corners[1] == 128);
+    CHECK(corners[2] == 256);
+    CHECK(corners[3] == 128);
+
+    /* Right face, outward normal +x. */
+    ResetEmptyWorld();
+    CHECK(World_Set(24, 24, 1, 1));
+    CHECK(World_Set(25, 24, 2, 1));
+    Light_FaceCorners(24, 24, 1, kLightFaceRight, corners);
+    CHECK(corners[0] == 128);
+    CHECK(corners[1] == 128);
+    CHECK(corners[2] == 256);
+    CHECK(corners[3] == 256);
+
+    CHECK(World_Set(25, 23, 1, 1));
+    Light_FaceCorners(24, 24, 1, kLightFaceRight, corners);
+    CHECK(corners[0] == 0);
+    CHECK(corners[1] == 128);
+    CHECK(corners[2] == 256);
+    CHECK(corners[3] == 128);
+}
+
+static void TestSampleCorners(void)
+{
+    short all[kLightCorners] = { 256, 256, 256, 256 };
+    short varied[kLightCorners] = { 0, 64, 128, 256 };
+    short dark[kLightCorners] = { 0, 256, 256, 256 };
+    short dim[kLightCorners] = { 128, 256, 256, 256 };
+    short mid, u, previous;
+
+    /* Four full corners stay full everywhere, including dead centre. */
+    CHECK(Light_SampleCorners(all, 0, 0) == 256);
+    CHECK(Light_SampleCorners(all, 128, 128) == 256);
+    CHECK(Light_SampleCorners(all, 255, 255) == 256);
+    CHECK(Light_SampleCorners(all, 17, 231) == 256);
+
+    /* The four samples are exact at their own corners. */
+    CHECK(Light_SampleCorners(varied, 0, 0) == 0);
+    CHECK(Light_SampleCorners(varied, 255, 0) == 64);
+    CHECK(Light_SampleCorners(varied, 255, 255) == 128);
+    CHECK(Light_SampleCorners(varied, 0, 255) == 256);
+
+    mid = Light_SampleCorners(varied, 128, 128);
+    CHECK(mid > 0);
+    CHECK(mid < 256);
+
+    /* Sampling towards the one dark corner only ever gets darker. */
+    previous = 0;
+    for (u = 0; u <= 255; u += 3) {
+        short sample = Light_SampleCorners(dark, u, 0);
+
+        CHECK(sample >= previous);
+        CHECK(sample >= 0);
+        CHECK(sample <= 256);
+        previous = sample;
+    }
+    previous = 0;
+    for (u = 0; u <= 255; u += 3) {
+        short sample = Light_SampleCorners(dark, 0, u);
+
+        CHECK(sample >= previous);
+        previous = sample;
+    }
+
+    /* Lowering one corner can never brighten a sample. */
+    CHECK(Light_SampleCorners(dim, 128, 128) <
+          Light_SampleCorners(all, 128, 128));
+
+    /* Out-of-range coordinates and corner values clamp. */
+    CHECK(Light_SampleCorners(varied, (short)-10, 0) ==
+          Light_SampleCorners(varied, 0, 0));
+    CHECK(Light_SampleCorners(varied, (short)300, 0) ==
+          Light_SampleCorners(varied, 255, 0));
+    CHECK(Light_SampleCorners(all, (short)-1, (short)300) == 256);
+}
+
 int main(void)
 {
     TestFaceOrder();
@@ -226,6 +374,10 @@ int main(void)
     TestOcclusionEnclosed();
     TestShade();
     TestCombine();
+    TestFaceCornersOpen();
+    TestFaceCornersTop();
+    TestFaceCornersSides();
+    TestSampleCorners();
 
     if (sFailures != 0) {
         fprintf(stderr, "test_light: %d failure(s)\n", sFailures);
