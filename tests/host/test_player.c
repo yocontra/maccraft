@@ -195,6 +195,49 @@ static void TestStepUp(void)
     CHECK(AbsD(Blocks(p.x) - 25.7) < 0.02);
 }
 
+/*
+ * 4b. A single-block rise is walked up, no jump needed; two blocks is not, in
+ * any direction. The renderer draws a one-block and a two-block step eight
+ * pixels apart, so "why can I not get on this one" needs a rule that does not
+ * depend on judging that difference by eye.
+ */
+static void TestWalkUpStep(void)
+{
+    static const int offs[3][2] = {{1, 0}, {0, 1}, {1, 1}};
+    int k, i, climbed;
+
+    for (k = 0; k < 3; k++) {
+        Player p;
+
+        ClearWorld();
+        FillGround(20, 40, 20, 40, 0);
+        World_Set((short)(24 + offs[k][0] * 2), (short)(24 + offs[k][1] * 2), 1, 1);
+        Player_Spawn(&p, 24, 24, 1);
+
+        climbed = 0;
+        for (i = 0; i < 200 && !climbed; i++) {
+            Player_Step(&p, (short)offs[k][0], (short)offs[k][1], false);
+            if (p.onGround && p.z == 2 * kPlayerOne)
+                climbed = 1;
+        }
+        CHECK(climbed);
+    }
+
+    /* Two blocks is a wall: the player stays at ground level. */
+    {
+        Player p;
+
+        ClearWorld();
+        FillGround(20, 40, 20, 40, 0);
+        World_Set(26, 24, 1, 1);
+        World_Set(26, 24, 2, 1);
+        Player_Spawn(&p, 24, 24, 1);
+        for (i = 0; i < 200; i++)
+            Player_Step(&p, 1, 0, false);
+        CHECK(p.z == kPlayerOne);
+    }
+}
+
 /* 5. A two-block wall stops the player at its face while staying grounded. */
 static void TestWalls(void)
 {
@@ -328,6 +371,7 @@ int main(void)
     TestWalking();
     TestJumping();
     TestStepUp();
+    TestWalkUpStep();
     TestWalls();
     TestFallingOff();
     TestNoTunnelling();

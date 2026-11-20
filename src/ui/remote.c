@@ -9,6 +9,9 @@
 #include <Files.h>
 
 #include "diagnostics.h"
+#include "game_window.h"
+#include "hover.h"
+#include "../game/pick.h"
 #include "remote.h"
 
 /* What the caller decided, so the receipt can say whether the command was
@@ -123,6 +126,252 @@ void Remote_AppendResult(const char *text)
         sResult[n++] = *text++;
     }
     sResult[n] = 0;
+}
+
+/* The command language. It lives here rather than in the window module: it is
+ * harness plumbing, not a rendering concern, and the window file is already the
+ * biggest unit in the program. */
+static short TakeInt(const char **p)
+{
+    short value = 0;
+    Boolean negative = false;
+
+    while (**p == ' ') {
+        (*p)++;
+    }
+    if (**p == '-') {
+        negative = true;
+        (*p)++;
+    }
+    while (**p >= '0' && **p <= '9') {
+        value = (short)(value * 10 + (**p - '0'));
+        (*p)++;
+    }
+    return negative ? (short)-value : value;
+}
+
+/* Run a command from the harness: walk, jump, select. Every verb goes through
+ * the same code the keyboard and the mouse use, so what the harness proves is
+ * what a player gets. */
+static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *outZ);
+static Boolean PickSurfaceAtFace(Point localPt, short *outX, short *outY, short *outZ,
+                                 short *outFace);
+
+void Remote_Apply(const char *cmd)
+{
+    if (strncmp(cmd, "walk", 4) == 0) {
+        const char *p = cmd + 4;
+        short dx = TakeInt(&p);
+        short dy = TakeInt(&p);
+        short ticks = TakeInt(&p);
+
+        Remote_SetResult("walk");
+        GameWindow_WalkForTest(dx, dy, ticks);
+    }
+    else if (strncmp(cmd, "jump", 4) == 0) {
+        Remote_SetResult("jump");
+        GameWindow_JumpForTest();
+    }
+    else if (strncmp(cmd, "select", 6) == 0) {
+        const char *p = cmd + 6;
+        short n = TakeInt(&p);
+
+        if (GameWindow_SelectBlockType((short)(n - 1))) {
+            Remote_SetResult("select");
+        }
+        else {
+            Remote_SetResult("select out of range");
+        }
+    }
+    else if (strncmp(cmd, "launch", 6) == 0) {
+        const char *p = cmd + 6;
+
+        while (*p == ' ') {
+            p++;
+        }
+        Remote_SetResult("launch");
+        Remote_Ack(cmd);
+        Remote_Launch(p);
+        /* Only reached when the launch failed. */
+        Remote_SetResult("launch failed");
+    }
+    else if (strncmp(cmd, "pick", 4) == 0) {
+        /* Harness: resolve a window-space point through the picker and report
+         * the tile plus where that tile projects, so the two can be compared
+         * without reading pixels. */
+        const char *p = cmd + 4;
+        short px = TakeInt(&p);
+        short py = TakeInt(&p);
+        short tx = 0, ty = 0, tz = 0;
+        char result[64];
+
+        short face = 0;
+
+        if (GameWindow_PickAt(px, py, &tx, &ty, &tz, &face)) {
+            short sx = 0, sy = 0;
+
+            GameWindow_TileScreen(tx, ty, (short)(tz - 1), &sx, &sy);
+            {
+                char *q = result;
+                short vals[4];
+                short k;
+
+                short bx = 0, by = 0;
+
+                GameWindow_TileScreen(tx, ty, (short)(tz - 1), &bx, &by);
+                vals[0] = bx;
+                vals[1] = by;
+                vals[2] = face;
+                vals[3] = tz;
+                for (k = 0; k < 5; k++) {
+                    if (k == 4) {
+                        /* The point is inside the tile's diamond, so its centre
+                         * is where the box will be drawn. */
+                        short digits2[6];
+                        short n2 = 0;
+                        long v2 = (long)sy;
+
+                        if (v2 < 0) { *q++ = '-'; v2 = -v2; }
+                        do { digits2[n2++] = (short)(v2 % 10); v2 /= 10; } while (v2 > 0);
+                        while (n2 > 0) { *q++ = (char)('0' + digits2[--n2]); }
+                        break;
+                    }
+                    short digits[6];
+                    short n = 0;
+                    long v = vals[k];
+
+                    if (v < 0) { *q++ = '-'; v = -v; }
+                    do { digits[n++] = (short)(v % 10); v /= 10; } while (v > 0);
+                    while (n > 0) { *q++ = (char)('0' + digits[--n]); }
+                    if (k < 3) { *q++ = ' '; }
+                }
+                *q = 0;
+                (void)sy;
+            }
+        }
+        else {
+            strcpy(result, "none");
+        }
+        Remote_SetResult(result);
+    }
+    else if (strncmp(cmd, "place", 5) == 0) {
+        /* Harness: resolve the point, run the click handler, report which cell
+         * the click acted on -- face placement is then checkable without
+         * reading pixels. */
+        const char *p = cmd + 5;
+        short px = TakeInt(&p);
+        short py = TakeInt(&p);
+        Point probe;
+        short tx = 0, ty = 0, tz = 0, face = 0;
+        char result[64];
+
+        probe.h = px;
+        probe.v = py;
+        if (!GameWindow_PickAt(px, py, &tx, &ty, &tz, &face)) {
+            strcpy(result, "nopick");
+        }
+        else {
+            short vals[4];
+            short k, q = 0;
+
+            vals[0] = tx;
+            vals[1] = ty;
+            vals[2] = tz;
+            vals[3] = face;
+            for (k = 0; k < 4; k++) {
+                short digits[6];
+                short n = 0;
+                long v = vals[k];
+
+                if (v == 0) {
+                    digits[n++] = 0;
+                }
+                while (v > 0) {
+                    digits[n++] = (short)(v % 10);
+                    v /= 10;
+                }
+                while (n > 0) {
+                    result[q++] = (char)('0' + digits[--n]);
+                }
+                if (k < 3) {
+                    result[q++] = ' ';
+                }
+            }
+            result[q] = 0;
+
+            /* Report the cell the click will act on and whether it was free:
+             * "tile x y z face -> cell x y z wasEmpty". */
+            {
+                short cX = tx, cY = ty, cZ;
+                short wasEmpty;
+
+                if (face == kPickFaceLeft) {
+                    cY = (short)(ty + 1);
+                    cZ = (short)(tz - 1);
+                }
+                else if (face == kPickFaceRight) {
+                    cX = (short)(tx + 1);
+                    cZ = (short)(tz - 1);
+                }
+                else {
+                    cZ = (short)(World_TopZ(tx, ty) + 1);
+                }
+
+                wasEmpty = (World_Get(cX, cY, cZ) == 0) ? 1 : 0;
+                {
+                    const char *word = wasEmpty ? " free" : " busy";
+                    short w = 0;
+
+                    while (word[w] != 0 && q < (short)sizeof(result) - 1) {
+                        result[q++] = word[w++];
+                    }
+                    result[q] = 0;
+                }
+
+                GameWindow_ClickForTest(px, py, false);
+            }
+        }
+        Remote_SetResult(result);
+    }
+    else if (strncmp(cmd, "stats", 5) == 0) {
+        Remote_ReportStats(Sprite_Work[2], Sprite_Work[3], Sprite_Work[5]);
+        {
+            char hover[40];
+            char *q = hover;
+            Point m;
+
+            GameWindow_CursorLocal(&m);
+
+            *q++ = (char)(Hover_Valid() ? 'V' : '-');
+            *q++ = ' ';
+            {   /* window-space cursor, then the hovered tile */
+                short vals[3];
+                short k;
+
+                vals[0] = m.h;
+                Hover_Tile(&vals[1], &vals[2], NULL);
+                for (k = 0; k < 3; k++) {
+                    short digits[6];
+                    short n = 0;
+                    long v = vals[k];
+
+                    if (v < 0) { *q++ = '-'; v = -v; }
+                    do { digits[n++] = (short)(v % 10); v /= 10; } while (v > 0);
+                    while (n > 0) { *q++ = (char)('0' + digits[--n]); }
+                    if (k < 2) { *q++ = ' '; }
+                }
+            }
+            *q = 0;
+            Remote_AppendResult(hover);
+        }
+    }
+    else if (strncmp(cmd, "save", 4) == 0) {
+        Remote_SetResult("save");
+        GameWindow_SaveWorld();
+    }
+    else {
+        Remote_SetResult("unknown verb");
+    }
 }
 
 void Remote_Ack(const char *cmd)

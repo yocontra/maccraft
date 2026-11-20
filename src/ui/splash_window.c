@@ -8,6 +8,7 @@
 #include "../constants.h"
 #include "../error.h"
 #include "splash_window.h"
+#include "pstring.h"
 #include "window_manager.h"
 
 #ifndef APP_VERSION_STR
@@ -19,25 +20,6 @@ static WindowRef sWindow              = NULL;
 static ControlHandle sStartGameButton = NULL;
 static Boolean sInitialized           = false;
 static Boolean sIsVisible             = false;
-
-/* Append a C string to a Pascal string, never past its 255-byte limit. */
-static void AppendCString(Str255 out, short *len, const char *text)
-{
-    while (*text != '\0' && *len < 255) {
-        out[*len + 1] = (unsigned char)*text++;
-        (*len)++;
-    }
-    out[0] = (unsigned char)*len;
-}
-
-/* Build "Version <APP_VERSION_STR>" for the bottom-right small print. */
-static void MakeVersionString(Str255 out)
-{
-    short len = 0;
-
-    AppendCString(out, &len, "Version ");
-    AppendCString(out, &len, APP_VERSION_STR);
-}
 
 /* Fill a four-point polygon with a pattern and outline it in black. A splash
  * repaint is rare, so the polygon is allocated and released here; the game
@@ -183,7 +165,7 @@ static void DrawSplashWindowUI(WindowPtr window)
     DrawString("\pClick Start or press Return");
 
     /* Version bottom-right in small grey. */
-    MakeVersionString(version);
+    PStr_Version(version);
     width = StringWidth(version);
     MoveTo((short)(portRect.right - 12 - width), (short)(portRect.bottom - 12));
     DrawString(version);

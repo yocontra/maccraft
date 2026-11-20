@@ -79,20 +79,38 @@ static RGBColor Shaded(const RGBColor *base, short factor)
 }
 
 
+/*
+ * The polygon handle is allocated once and refilled per face.
+ *
+ * This used to OpenPoly/KillPoly every face, which allocates and frees a block
+ * per face on the 1-bit path -- thousands of allocations a frame. A PolyHandle
+ * is just a count word followed by points, so writing them directly is both
+ * cheaper and allocation-free.
+ */
+static PolyHandle sQuadPoly = NULL;
+
 static PolyHandle QuadPoly(short x0, short y0, short x1, short y1, short x2, short y2,
                            short x3, short y3)
 {
-    PolyHandle poly = OpenPoly();
+    Point *pts;
 
-    if (poly == NULL) {
-        return NULL;
+    if (sQuadPoly == NULL) {
+        sQuadPoly = OpenPoly();
+        if (sQuadPoly == NULL) {
+            return NULL;
+        }
+        ClosePoly();          /* size the handle for four points */
     }
-    MoveTo(x0, y0);
-    LineTo(x1, y1);
-    LineTo(x2, y2);
-    LineTo(x3, y3);
-    ClosePoly();
-    return poly;
+
+    /* (*poly) is { short polySize; Point polyPoints[]; }. */
+    pts = (*sQuadPoly)->polyPoints;
+    pts[0].h = x0;  pts[0].v = y0;
+    pts[1].h = x1;  pts[1].v = y1;
+    pts[2].h = x2;  pts[2].v = y2;
+    pts[3].h = x3;  pts[3].v = y3;
+    (*sQuadPoly)->polySize = 4;
+
+    return sQuadPoly;
 }
 
 
@@ -138,8 +156,6 @@ static void PaintQuad(const WorldView *v, short x0, short y0, short x1, short y1
         Block_Grain(id, face, variation, (unsigned char *)&stamp);
         FillPoly(poly, &stamp);
     }
-
-    KillPoly(poly);
 }
 
 

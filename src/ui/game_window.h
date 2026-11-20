@@ -27,6 +27,21 @@ void GameWindow_ResetWorld(void);
 /* Write the world to disk now. */
 OSErr GameWindow_SaveWorld(void);
 
+/* Resolve a point in the play area to a block and the face under it. Used by
+ * the harness verbs that click and by the click handler itself. */
+Boolean GameWindow_PickAt(short localX, short localY, short *outX, short *outY,
+                          short *outZ, short *outFace);
+
+/* Select a block kind by index (0-based); false when out of range. */
+Boolean GameWindow_SelectBlockType(short index);
+
+/* The pointer in window coordinates. GetMouse reports in the current port's
+ * coordinates, so the port has to be set for it to be window-relative. */
+void GameWindow_CursorLocal(Point *out);
+
+/* Where a tile's block projects on screen, in window coordinates. */
+void GameWindow_TileScreen(short x, short y, short z, short *sx, short *sy);
+
 /* Player state for the harness. */
 Boolean GameWindow_PlayerGrounded(void);
 short GameWindow_PlayerZ(void);

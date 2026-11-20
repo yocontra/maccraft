@@ -15,6 +15,7 @@
 #include <TextUtils.h>
 
 #include "hud.h"
+#include "pstring.h"
 #include "sprite_sheet.h"
 #include "../game/blocks.h"
 
@@ -92,34 +93,6 @@ static void Fill(const Rect *r, unsigned long colour)
     Sprite_FillRect(r, colour);
 }
 
-/* Append a Pascal string to a growing one. */
-static void AppendPStr(Str255 dst, const char *text)
-{
-    short len = (short)dst[0];
-    short i = 0;
-
-    while (text[i] != '\0' && len < 254) {
-        dst[++len] = (unsigned char)text[i++];
-    }
-    dst[0] = (unsigned char)len;
-}
-
-static void AppendNum(Str255 dst, long value)
-{
-    Str255 num;
-
-    NumToString(value, num);
-    {
-        short len = (short)dst[0];
-        short i;
-
-        for (i = 1; i <= num[0] && len < 254; i++) {
-            dst[++len] = num[i];
-        }
-        dst[0] = (unsigned char)len;
-    }
-}
-
 void HUD_DrawStrip(BlockID targeted, BlockID selected, short tileX, short tileY)
 {
     Rect panel;
@@ -143,14 +116,14 @@ void HUD_DrawStrip(BlockID targeted, BlockID selected, short tileX, short tileY)
      * the camera. The old strip printed the selected kind while calling it the
      * block, which was simply wrong. */
     text[0] = 0;
-    AppendPStr(text, "look: ");
-    AppendPStr(text, Block_Name(targeted));
-    AppendPStr(text, "   place: ");
-    AppendPStr(text, Block_Name(selected));
-    AppendPStr(text, "   tile: ");
-    AppendNum(text, tileX);
-    AppendPStr(text, ",");
-    AppendNum(text, tileY);
+    PStr_AppendC(text, "look: ");
+    PStr_AppendC(text, Block_Name(targeted));
+    PStr_AppendC(text, "   place: ");
+    PStr_AppendC(text, Block_Name(selected));
+    PStr_AppendC(text, "   tile: ");
+    PStr_AppendNum(text, tileX);
+    PStr_AppendC(text, ",");
+    PStr_AppendNum(text, tileY);
 
     label.left = (short)(sStrip.right - StringWidth(text) - 4);
     /* Never let the readout run into the title: the title is drawn at

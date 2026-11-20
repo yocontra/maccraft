@@ -34,6 +34,9 @@ void Remote_ReportStats(long paintTicks, long paints, long steps);
 /* Append text to the result Remote_Ack will write. */
 void Remote_AppendResult(const char *text);
 
+/* Run one command line: the harness verb language. */
+void Remote_Apply(const char *cmd);
+
 /* Write the receipt for a command the caller has acted on. */
 void Remote_Ack(const char *cmd);
 

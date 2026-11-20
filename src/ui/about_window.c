@@ -7,30 +7,11 @@
 #include "../constants.h"
 #include "../error.h"
 #include "about_window.h"
+#include "pstring.h"
 
 #ifndef APP_VERSION_STR
 #define APP_VERSION_STR "dev"
 #endif
-
-/* Append a C string to a Pascal string, never past its 255-byte limit. */
-static void AppendCString(Str255 out, short *len, const char *text)
-{
-    while (*text != '\0' && *len < 255) {
-        out[*len + 1] = (unsigned char)*text++;
-        (*len)++;
-    }
-    out[0] = (unsigned char)*len;
-}
-
-/* Build "Version <APP_VERSION_STR>" without depending on ParamText, because
- * the dialog body is drawn directly rather than from the DITL. */
-static void MakeVersionString(Str255 out)
-{
-    short len = 0;
-
-    AppendCString(out, &len, "Version ");
-    AppendCString(out, &len, APP_VERSION_STR);
-}
 
 /* Replace a DITL item's text at runtime. The About box draws its body in the
  * Dialog Manager's text-drawing path only for the button, so the resource's
@@ -107,7 +88,7 @@ static void DrawAboutContent(DialogPtr dialog)
     /* Version in the grey small-print style. */
     {
         Str255 version;
-        MakeVersionString(version);
+        PStr_Version(version);
         MoveTo(12, 210);
         RGBForeColor(&gray);
         DrawString(version);

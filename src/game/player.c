@@ -225,6 +225,26 @@ static void SolveZ(Player *p)
     }
 }
 
+/*
+ * Auto-step: a grounded player walks up a single block without jumping.
+ *
+ * The renderer draws a one-block step and a two-block step eight pixels apart,
+ * so they look alike; requiring a jump for every rise made single-block terrain
+ * feel arbitrary. One block, and only while grounded, is the rule -- two blocks
+ * still needs a jump and cannot be climbed by walking.
+ */
+static Boolean TryStepUp(long x, long y, long z)
+{
+    long nz = z + kPlayerOne;
+
+    if (BoxHits(x, y, nz)) {
+        return false;
+    }
+    /* Headroom above the stepped-up position: the box must fit after the rise
+     * too, which BoxHits has just checked. Standing on the step is enough. */
+    return true;
+}
+
 static void SolveX(Player *p)
 {
     long remaining = p->vx;
@@ -235,6 +255,14 @@ static void SolveX(Player *p)
         long face;
 
         if (!BoxHits(nx, p->y, p->z)) {
+            p->x = nx;
+            remaining -= step;
+            continue;
+        }
+
+        /* Blocked at this height: a grounded player steps up one block. */
+        if (p->onGround && TryStepUp(nx, p->y, p->z)) {
+            p->z = p->z + kPlayerOne;
             p->x = nx;
             remaining -= step;
             continue;
@@ -261,6 +289,15 @@ static void SolveY(Player *p)
         long face;
 
         if (!BoxHits(p->x, ny, p->z)) {
+            p->y = ny;
+            remaining -= step;
+            continue;
+        }
+
+        /* Same rule on the other axis, so a step is climbable whichever way it
+         * faces. */
+        if (p->onGround && TryStepUp(p->x, ny, p->z)) {
+            p->z = p->z + kPlayerOne;
             p->y = ny;
             remaining -= step;
             continue;

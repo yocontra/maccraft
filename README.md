@@ -17,6 +17,7 @@ or SE as well as a Quadra.
 | Action | Input |
 | --- | --- |
 | Walk | Arrow keys or W/A/S/D (hold to keep walking) |
+| Climb a step | Walk into a single block: one block is stepped up, two needs a jump and cannot be walked |
 | Jump | Space |
 | Place block | Click a tile's top face to stack, or its side face to build beside it |
 | Mine block | Hold shift and the mouse button on a block until it breaks |
