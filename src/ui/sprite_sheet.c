@@ -1,10 +1,10 @@
-/* sprite_sheet.c - baked, shaded, indexed block faces written straight into the
- * screen's pixels.
+/* sprite_sheet.c - baked, shaded block faces written straight into the
+ * screen's pixels as 32-bit RGB words.
  *
  * Why direct writes: on this guest every CopyBits/CopyMask/CopyDeepMask route
  * from an offscreen bitmap drew nothing or drew white, while a self-copy of the
  * screen's own bits landed. The device PixMap is addressable once locked, so the
- * baked band bytes are written into it a row at a time.
+ * baked face words are written into it a row at a time.
  *
  * Two quantities have to be right, and both are now measured rather than
  * assumed (see the harness log: disp_left/top, portbits_left/top, first_sx/sy):
@@ -18,7 +18,6 @@
  */
 
 #include <Memory.h>
-#include <Palettes.h>
 #include <QDOffscreen.h>
 #include <Quickdraw.h>
 
@@ -32,11 +31,32 @@
 #define kSpriteBands (kSpriteKinds * 3 * kSpriteShades)
 /* A band is as tall as the tallest face: the top is 16 rows, a side 24. */
 #define kSpriteBandH 24
-#define kSpriteRows  (kSpriteBands * kSpriteBandH)
 #define kMaskRowBytes 4
 
-static unsigned char sSheet[kSpriteRows * kSpriteW];
-static unsigned char sMaskSheet[kSpriteRows * kMaskRowBytes];
+/* Each band is baked straight into the 0x00RRGGBB words the screen takes, packed
+ * without the transparent corners.  A face carries 256 inked texels either way
+ * (tests/host/test_bake.c pins 256 for the top and 256 for a side: sixteen
+ * texels in each of sixteen columns), so a top band is 256 words.
+ *
+ * A side face also has one empty row: for the 16-column parallelogram the last
+ * of the 24 rows has no texels at all.  The draw has always treated an empty
+ * row's run as the single column 0 pixel, so the packed block keeps one word
+ * for it; 260 gives that word room and keeps the block 4-byte aligned. */
+#define kTopBandRows   kBakeHeight
+#define kTopBandWords  256
+#define kSideBandRows  kBakeSideHeight
+#define kSideBandWords 260
+
+static unsigned long sTopWords[kSpriteKinds * kSpriteShades * kTopBandWords];
+static unsigned short sTopRowStart[kSpriteKinds * kSpriteShades][kTopBandRows];
+static unsigned long sSideWords[kSpriteKinds * 2 * kSpriteShades * kSideBandWords];
+static unsigned short sSideRowStart[kSpriteKinds * 2 * kSpriteShades][kSideBandRows];
+
+/* Band number -> its word block and row-offset table, filled by BakeBand. */
+static unsigned long *sBandWords[kSpriteBands];
+static unsigned short *sBandRowStart[kSpriteBands];
+
+static unsigned char sMaskSheet[kSpriteBands * kSpriteBandH * kMaskRowBytes];
 
 /* The inked run of every sprite row, computed once at bake time. Every face row
  * is a single contiguous run, so the draw loop needs no mask scan at all: it
@@ -44,12 +64,6 @@ static unsigned char sMaskSheet[kSpriteRows * kMaskRowBytes];
  * the frame's work. */
 static unsigned char sRunFirst[kSpriteBands * kSpriteBandH];
 static unsigned char sRunLast[kSpriteBands * kSpriteBandH];
-static unsigned char sDevice[kArtPaletteEntries];
-
-/* The art palette as 8-bit RGB triplets. The guest runs at 32-bit direct colour
- * (measured: pixelSize 32, rowBytes 4096 for a 1024-wide screen), so a face is
- * written as real pixels and no palette mapping is involved at all. */
-static unsigned char sRGB[kArtPaletteEntries][3];
 
 /* Shading a face means moving the whole texture one ramp step down, not passing
  * every texel through Art_ShadeIndex: that maps each texel to a fixed step for
@@ -58,13 +72,13 @@ static unsigned char sRGB[kArtPaletteEntries][3];
  * shade and floored at the darkest step of the same hue. */
 static unsigned char sShadeMap[kSpriteShades][kArtPaletteEntries];
 
-/* The same palette as whole 0x00RRGGBB words, which is one store per pixel at
- * 32-bit depth instead of four byte stores and a shift. */
+/* The palette as whole 0x00RRGGBB words.  The guest runs at 32-bit direct colour
+ * (measured: pixelSize 32, rowBytes 4096 for a 1024-wide screen) and Sprite_Init
+ * refuses any other depth, so these are the only pixels that get written. */
 static unsigned long sPixel32[kArtPaletteEntries];
 static Rect sView;
 static short sOriginX = 0;
 static short sOriginY = 0;
-static short sDepth = 8;
 static Boolean sReady = false;
 
 static unsigned char sPixels[kBakePixels];
@@ -103,38 +117,6 @@ short Sprite_ShadeStep(short factor)
     return 3;
 }
 
-/* An indexed GDevice keeps a Palette in pmTable: a dense list of ColorInfo, each
- * with its RGB. Reading it as a ColorTable is what made every colour white. */
-#define kDeviceEntries 256
-
-static struct {
-    short count;
-    RGBColor rgb[kDeviceEntries];
-} sDeviceColors;
-
-static void ReadDeviceColors(void)
-{
-    GDHandle gd = GetMainDevice();
-    PaletteHandle pal;
-    short i;
-
-    sDeviceColors.count = 0;
-    if (gd == NULL || (*gd)->gdPMap == NULL || (*(*gd)->gdPMap)->pmTable == NULL) {
-        return;
-    }
-    pal = (PaletteHandle)(*(*gd)->gdPMap)->pmTable;
-    if (pal == NULL || *pal == NULL) {
-        return;
-    }
-    sDeviceColors.count = (*pal)->pmEntries;
-    if (sDeviceColors.count > kDeviceEntries) {
-        sDeviceColors.count = kDeviceEntries;
-    }
-    for (i = 0; i < sDeviceColors.count; i++) {
-        sDeviceColors.rgb[i] = (*pal)->pmInfo[i].ciRGB;
-    }
-}
-
 static void BuildRGBTable(void)
 {
     int i;
@@ -143,41 +125,9 @@ static void BuildRGBTable(void)
         unsigned short r, g, b;
 
         Art_RGBColor(i, &r, &g, &b);
-        sRGB[i][0] = (unsigned char)(r >> 8);
-        sRGB[i][1] = (unsigned char)(g >> 8);
-        sRGB[i][2] = (unsigned char)(b >> 8);
-        sPixel32[i] = ((unsigned long)sRGB[i][0] << 16) |
-                      ((unsigned long)sRGB[i][1] << 8) |
-                      (unsigned long)sRGB[i][2];
-    }
-}
-
-static void BuildDeviceMap(void)
-{
-    int i;
-    short entry;
-
-    ReadDeviceColors();
-
-    for (i = 0; i < kArtPaletteEntries; i++) {
-        unsigned short r, g, b;
-        long bestDistance = -1;
-        unsigned char best = (unsigned char)i;
-
-        Art_RGBColor(i, &r, &g, &b);
-
-        for (entry = 0; entry < sDeviceColors.count; entry++) {
-            long dr = (long)sDeviceColors.rgb[entry].red - (long)r;
-            long dg = (long)sDeviceColors.rgb[entry].green - (long)g;
-            long db = (long)sDeviceColors.rgb[entry].blue - (long)b;
-            long distance = dr * dr + dg * dg + db * db;
-
-            if (bestDistance < 0 || distance < bestDistance) {
-                bestDistance = distance;
-                best = (unsigned char)entry;
-            }
-        }
-        sDevice[i] = best;
+        sPixel32[i] = ((unsigned long)(r >> 8) << 16) |
+                      ((unsigned long)(g >> 8) << 8) |
+                      (unsigned long)(b >> 8);
     }
 }
 
@@ -200,38 +150,63 @@ static void BuildShadeMap(void)
     }
 }
 
-/* Minecraft's smooth lighting darkens a side face towards the ground it meets.
- * The palette only has four ramp steps, so the ramp is quantised: the top third
- * of a side keeps the face's shade, the middle goes one step darker and the
- * bottom one step darker again. That reads as a contact shadow and stops blocks
- * looking like they float. Tops stay uniform, as the light hits them square on. */
-static short RowShade(short face, short row, short height, short shade)
-{
-    short extra;
-
-    if (face == 0 || height <= 0) {
-        return shade;
-    }
-    extra = (short)((row * 3) / height);
-    if (extra > 2) {
-        extra = 2;
-    }
-    shade = (short)(shade + extra);
-    if (shade >= kSpriteShades) {
-        shade = kSpriteShades - 1;
-    }
-    return shade;
-}
-
 /* Bands whose mask has holes need the slow draw path: the fast path copies a
  * whole run and would paint the holes. Only water uses this. */
 static unsigned char sBandHoles[kSpriteBands];
 
-static void PutBand(short band, short width, short height, short shade, short face, BlockID id)
+static short TopBandIndex(short kind, short shade)
 {
-    short row, col;
-    Ptr colourBase = (Ptr)sSheet + (long)band * kSpriteBandH * kSpriteW;
-    Ptr maskBase = (Ptr)sMaskSheet + (long)band * kSpriteBandH * kMaskRowBytes;
+    return (short)(kind * kSpriteShades + shade);
+}
+
+static short SideBandIndex(short kind, short face, short shade)
+{
+    return (short)(((kind * 2 + (face - 1)) * kSpriteShades) + shade);
+}
+
+/* Bake one band: shade and dither every pixel, record the mask and the inked
+ * run of each row, and pack the final screen words.  The words are exactly what
+ * the draw loop used to look up per pixel; packing them without the transparent
+ * corners is what lets the draw copy them in order. */
+static void BakeBand(BlockID id, short face, short shade)
+{
+    short kind = (short)id - 1;
+    short width, height, band, bandStart, row, col;
+    unsigned short offset = 0;
+    unsigned long rowWords[kBakeWidth];
+    Ptr maskBase;
+
+    if (kind < 0) {
+        kind = 0;
+    }
+    if (kind >= kSpriteKinds) {
+        kind = kSpriteKinds - 1;
+    }
+    if (face < 0 || face > 2) {
+        face = 0;
+    }
+    if (shade < 0 || shade >= kSpriteShades) {
+        shade = 0;
+    }
+
+    width = Bake_FaceWidth(face);
+    height = Bake_FaceHeight(face);
+    band = BandOf(id, face, shade);
+    bandStart = (short)(band * kSpriteBandH);
+    maskBase = (Ptr)sMaskSheet + (long)bandStart * kMaskRowBytes;
+
+    if (face == kBlockFaceTop) {
+        short index = TopBandIndex(kind, shade);
+
+        sBandWords[band] = sTopWords + (long)index * kTopBandWords;
+        sBandRowStart[band] = sTopRowStart[index];
+    }
+    else {
+        short index = SideBandIndex(kind, face, shade);
+
+        sBandWords[band] = sSideWords + (long)index * kSideBandWords;
+        sBandRowStart[band] = sSideRowStart[index];
+    }
 
     for (row = 0; row < height; row++) {
         /* Continuous shade in sixteenths: the band's own step, darker towards
@@ -241,62 +216,70 @@ static void PutBand(short band, short width, short height, short shade, short fa
         short shadeX16 = (short)(shade * 16 + (face != 0 ? (row * 48) / height : 0));
         short step = (short)(shadeX16 / 16);
         short fraction = (short)(shadeX16 % 16);
-
-        Ptr src = sPixels + (long)row * width;
-        Ptr cov = sPixelMask + (long)row * width;
+        const unsigned char *src = sPixels + (long)row * width;
+        const unsigned char *cov = sPixelMask + (long)row * width;
         /* Water is drawn as a checkerboard so the bed shows through: there is no
          * alpha on this display, and a 50 % mask is how a classic Mac draws
          * transparency. */
         Boolean perforate = (Boolean)(id == kBlockWater);
-        Ptr dst = colourBase + (long)row * kSpriteW;
         Ptr mrow = maskBase + (long)row * kMaskRowBytes;
+        unsigned long *dst = sBandWords[band] + offset;
+        short first = -1;
+        short last = -1;
 
         for (col = 0; col < kMaskRowBytes; col++) {
             mrow[col] = 0;
         }
-        {
-            short first = -1;
-            short last = -1;
 
-            for (col = 0; col < width; col++) {
-                unsigned char index = src[col];
+        for (col = 0; col < width; col++) {
+            unsigned char texel = src[col];
 
-                /* Shade AND contact gradient: the shade band picks the ramp
-                 * step and RowShade darkens it towards the base of a side face.
-                 * Without this every band was identical and the whole lighting
-                 * model never reached the screen. */
-                short useStep = step;
+            /* Shade AND contact gradient: the shade band picks the ramp step
+             * and the row term darkens it towards the base of a side face.
+             * Without this every band was identical and the whole lighting
+             * model never reached the screen. */
+            short useStep = step;
 
-                if (fraction > 0 && Dither_On(col, row, fraction)) {
-                    useStep = (short)(step + 1);
-                }
-                if (useStep >= kSpriteShades) {
-                    useStep = kSpriteShades - 1;
-                }
-                index = sShadeMap[useStep][index < kArtPaletteEntries ? index : 0];
-                dst[col] = sDevice[index];
-                /* A quarter of the pixels are left unpainted: with no alpha, a
-                 * sparse hole pattern reads as depth, while 50 % looked like a
-                 * screen door. */
-                if (cov[col] && !(perforate && (((col + 2 * row) & 3) == 0))) {
-                    mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
-                    if (first < 0) {
-                        first = col;
-                    }
-                    last = col;
-                }
-                if (perforate) {
-                    sBandHoles[band] = 1;
-                }
+            if (fraction > 0 && Dither_On(col, row, fraction)) {
+                useStep = (short)(step + 1);
             }
-            sRunFirst[band * kSpriteBandH + row] = (unsigned char)(first < 0 ? 0 : first);
-            sRunLast[band * kSpriteBandH + row] = (unsigned char)(last < 0 ? 0 : last);
+            if (useStep >= kSpriteShades) {
+                useStep = kSpriteShades - 1;
+            }
+            rowWords[col] =
+                sPixel32[sShadeMap[useStep][texel < kArtPaletteEntries ? texel : 0]];
+            /* A quarter of the water pixels are left unpainted: with no alpha,
+             * a sparse hole pattern reads as depth, while 50 % looked like a
+             * screen door. */
+            if (cov[col] && !(perforate && (((col + 2 * row) & 3) == 0))) {
+                mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
+                if (first < 0) {
+                    first = col;
+                }
+                last = col;
+            }
         }
+        if (perforate) {
+            sBandHoles[band] = 1;
+        }
+
+        sRunFirst[bandStart + row] = (unsigned char)(first < 0 ? 0 : first);
+        sRunLast[bandStart + row] = (unsigned char)(last < 0 ? 0 : last);
+        sBandRowStart[band][row] = offset;
+
+        /* Rows are one contiguous run, and the runs of a face's silhouette add
+         * up to exactly kTopBandWords/kSideBandWords (the bake tests pin 256 and
+         * 128), so this cannot write past the block. */
+        if (first < 0) {
+            first = 0;
+            last = 0;
+        }
+        for (col = first; col <= last; col++) {
+            *dst++ = rowWords[col];
+        }
+        offset = (unsigned short)(offset + (last - first) + 1);
     }
 }
-
-/* Built once by Sprite_Init below; the cache lives with the draw paths. */
-static void ClearTopCache(void);
 
 Boolean Sprite_Init(void)
 {
@@ -318,8 +301,6 @@ Boolean Sprite_Init(void)
 
     BuildRGBTable();
     BuildShadeMap();
-    BuildDeviceMap();
-    ClearTopCache();
 
     for (id = 1; id <= kSpriteKinds; id++) {
         for (face = 0; face < 3; face++) {
@@ -328,13 +309,11 @@ Boolean Sprite_Init(void)
              * and the face still darkens as a whole. */
             Bake_Face(Art_Texture((BlockID)id, face), face, sPixels, sPixelMask);
             for (shade = 0; shade < kSpriteShades; shade++) {
-                PutBand(BandOf((BlockID)id, face, shade), Bake_FaceWidth(face),
-                        Bake_FaceHeight(face), shade, face, (BlockID)id);
+                BakeBand((BlockID)id, face, shade);
             }
         }
     }
 
-    sDepth = (*gd)->gdPMap != NULL ? (*(*gd)->gdPMap)->pixelSize : 8;
     sReady = true;
     return true;
 }
@@ -524,95 +503,6 @@ void Sprite_Dispose(void)
     sReady = false;
 }
 
-/* Expanded top faces.
- *
- * The sheet stores one palette index per pixel, so the fast 32-bit path did a
- * byte load plus a scaled table load for every pixel.  Expanding a top band
- * into its final 32-bit words once turns the hot loop into a word copy
- * (`move.l (a2)+,(a3)+` on the 68000), roughly twice as fast per pixel.
- *
- * Only tops are cached, and only three of them.  A flat field draws about 2300
- * tops against a few hundred sides, so the tops are where the pixels are,
- * while the whole sheet expanded would be half a megabyte.  Three slots hold
- * the kinds and shade steps a frame actually uses; a miss draws through the
- * palette path it always used and fills the least recently used slot, so one
- * new shade costs a single expansion instead of thrashing every face.  Nothing
- * invalidates an entry: the sheet is built once in Sprite_Init.
- */
-#define kTopSlots 3
-#define kTopRows kSpriteH
-
-static unsigned long sTopWords[kTopSlots][kTopRows][kSpriteW];
-static short sTopTag[kTopSlots]; /* band + 1; 0 = empty */
-static unsigned long sTopAge[kTopSlots];
-static unsigned long sTopClock;
-
-static void ClearTopCache(void)
-{
-    short slot;
-
-    for (slot = 0; slot < kTopSlots; slot++) {
-        sTopTag[slot] = 0;
-        sTopAge[slot] = 0;
-    }
-    sTopClock = 0;
-}
-
-/* NULL when the band is not cached; the caller then draws through the palette
- * path, which is byte-for-byte what the sprite used to do. */
-static const unsigned long *TopCacheFind(short band)
-{
-    short slot;
-
-    for (slot = 0; slot < kTopSlots; slot++) {
-        if (sTopTag[slot] == (short)(band + 1)) {
-            sTopAge[slot] = ++sTopClock;
-            return sTopWords[slot][0];
-        }
-    }
-    return NULL;
-}
-
-/* Expand a top band into the least recently used slot.  A top face is kSpriteW
- * wide and kTopRows tall; only those rows are read, the rows below belong to
- * the side faces of the same band number.  Only the inked run of each row is
- * expanded -- the rest of the diamond is transparent and the draw loop never
- * reads it -- so a miss costs one face's worth of lookups, not two. */
-static void TopCacheStore(short band)
-{
-    short slot;
-    short lru = 0;
-    short row;
-    short col;
-    const unsigned char *src;
-    unsigned long *dst;
-
-    for (slot = 1; slot < kTopSlots; slot++) {
-        if (sTopAge[slot] < sTopAge[lru]) {
-            lru = slot;
-        }
-    }
-
-    src = sSheet + (long)band * kSpriteBandH * kSpriteW;
-    dst = sTopWords[lru][0];
-    for (row = 0; row < kTopRows; row++) {
-        short srcRow = (short)(band * kSpriteBandH + row);
-        short first = sRunFirst[srcRow];
-        short last = sRunLast[srcRow];
-        const unsigned char *s = src + first;
-        unsigned long *d = dst + first;
-
-        for (col = first; col <= last; col++) {
-            *d++ = sPixel32[*s++];
-        }
-        src += kSpriteW;
-        dst += kSpriteW;
-    }
-
-    sTopTag[lru] = (short)(band + 1);
-    sTopAge[lru] = ++sTopClock;
-}
-
 /* Harness probes: Sprite_Probe[0] != 0 makes Sprite_Draw return immediately, so
  * the cost of the copy can be separated from the cost of deciding to draw;
  * [1] counts calls. */
@@ -637,9 +527,9 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
     short originY;
     short viewLeft, viewRight, viewTop, viewBottom;
     short firstRow, lastRow;
-    Ptr bandPixels;
+    const unsigned long *bandWords;
+    const unsigned short *rowStart;
     Ptr rowBase;
-    const unsigned long *topWords;
 
     if (!sReady || id == 0 || sScreenBase == NULL) {
         return;
@@ -688,37 +578,31 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
     }
 
     bandStart = (short)(band * kSpriteBandH);
-    bandPixels = (Ptr)sSheet + (long)bandStart * kSpriteW;
+    bandWords = sBandWords[band];
+    rowStart = sBandRowStart[band];
     /* One multiply for the first row, then the pointer walks: the old code did a
      * multiply per row per face, which is 32,000 multiplies a frame. */
     rowBase = sScreenBase + (long)(originY + firstRow) * sScreenRowBytes;
 
-    /* An expanded top face, if this one is already in the cache. Sides keep the
-     * palette path: they are a small minority of the pixels and caching them
-     * would need the extra rows a top does not use. */
-    topWords = NULL;
-    if (sDepth >= 32 && scale == 1 && face == 0) {
-        topWords = TopCacheFind(band);
-    }
-
     /* The depth branch is hoisted out of the row loop: one test per face instead
      * of one per row. */
-    if (sDepth >= 32 && scale == 2) {
+    if (scale == 2) {
         /* Two-by-two magnification: each source pixel fills a 2x2 destination
          * square, written as two words per row into two consecutive rows. */
         for (row = firstRow; row < lastRow; row++) {
             short srcRow = (short)(bandStart + row);
-            short x0 = (short)(originX + sRunFirst[srcRow] * 2);
+            short first = sRunFirst[srcRow];
+            short x0 = (short)(originX + first * 2);
+            short x1;
             short dstRow = (short)(originY + row * 2);
+            const unsigned long *w = bandWords + rowStart[row];
+            unsigned long *line;
+            unsigned long *line2;
 
             if (dstRow < 0 || (short)(dstRow + 1) >= sScreenHeight) {
                 continue;
             }
-            short x1 = (short)(originX + (sRunLast[srcRow] + 1) * 2);
-            const unsigned char *p;
-            unsigned long *line;
-            unsigned long *line2;
-
+            x1 = (short)(originX + (sRunLast[srcRow] + 1) * 2);
             if (x0 < viewLeft) {
                 x0 = viewLeft;
             }
@@ -728,11 +612,10 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
             if (x0 >= x1) {
                 continue;
             }
-            p = bandPixels + (long)row * kSpriteW;
             line = (unsigned long *)(sScreenBase + (long)dstRow * sScreenRowBytes) + x0;
             line2 = (unsigned long *)((Ptr)line + sScreenRowBytes);
             for (col = x0; col < x1; col++, line++, line2++) {
-                unsigned long word = sPixel32[p[(col - originX) >> 1]];
+                unsigned long word = w[((col - originX) >> 1) - first];
 
                 *line = word;
                 *line2 = word;
@@ -741,14 +624,15 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
         return;
     }
 
-    if (sDepth >= 32 && sBandHoles[band]) {
+    if (sBandHoles[band]) {
         Ptr holeMask = (Ptr)sMaskSheet + (long)bandStart * kMaskRowBytes;
 
         /* Per-pixel: the mask has holes, so a run copy would fill them. */
         for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
             short srcRow = (short)(bandStart + row);
+            short first = sRunFirst[srcRow];
             Ptr mrow = holeMask + (long)row * kMaskRowBytes;
-            const unsigned char *p = bandPixels + (long)row * kSpriteW;
+            const unsigned long *w = bandWords + rowStart[row];
             unsigned long *line = (unsigned long *)rowBase;
 
             for (col = 0; col < width; col++) {
@@ -760,106 +644,47 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
                 if ((mrow[col >> 3] & (unsigned char)(0x80 >> (col & 7))) == 0) {
                     continue;
                 }
-                line[x] = sPixel32[p[col]];
+                line[x] = w[col - first];
             }
         }
         return;
     }
 
-    if (sDepth >= 32) {
-        for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
-            short srcRow = (short)(bandStart + row);
-            short x0 = (short)(originX + sRunFirst[srcRow]);
-            short x1 = (short)(originX + sRunLast[srcRow] + 1);
-            const unsigned char *p;
-            unsigned long *line;
+    /* Every band is baked as words already, so the whole face is a copy: one
+     * load and one store per pixel, no table lookup and no cache to miss. */
+    for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
+        short srcRow = (short)(bandStart + row);
+        short first = sRunFirst[srcRow];
+        short x0 = (short)(originX + first);
+        short x1 = (short)(originX + sRunLast[srcRow] + 1);
+        const unsigned long *s = bandWords + rowStart[row];
+        unsigned long *line;
 
-            if (x0 < viewLeft) {
-                x0 = viewLeft;
-            }
-            if (x1 > viewRight) {
-                x1 = viewRight;
-            }
-            if (x0 >= x1) {
-                continue;
-            }
-            line = (unsigned long *)rowBase + x0;
-            if (topWords != NULL) {
-                /* Cached top: a word copy per row, which is the whole point of
-                 * the cache (one instruction per pixel on the 68000). */
-                const unsigned long *w =
-                    topWords + (short)(row * kSpriteW) + (x0 - originX);
-
-                for (col = x0; col < x1; col++) {
-                    *line++ = *w++;
-                }
-            }
-            else {
-                p = bandPixels + (long)row * kSpriteW + (x0 - originX);
-                for (col = x0; col < x1; col++) {
-                    *line++ = sPixel32[*p++];
-                }
-            }
+        if (x0 < viewLeft) {
+            x0 = viewLeft;
         }
-
-        /* First sight of a top band this frame: the face itself was drawn the
-         * old way, and the expansion pays for the next two thousand. */
-        if (face == 0 && topWords == NULL) {
-            TopCacheStore(band);
+        if (x1 > viewRight) {
+            x1 = viewRight;
         }
-    }
-    else if (sDepth == 16) {
-        for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
-            short srcRow = (short)(bandStart + row);
-            short x0 = (short)(originX + sRunFirst[srcRow]);
-            short x1 = (short)(originX + sRunLast[srcRow] + 1);
-            const unsigned char *p;
-            Ptr out;
-
-            if (x0 < viewLeft) {
-                x0 = viewLeft;
-            }
-            if (x1 > viewRight) {
-                x1 = viewRight;
-            }
-            if (x0 >= x1) {
-                continue;
-            }
-            p = bandPixels + (long)row * kSpriteW + (x0 - originX);
-            out = rowBase + (long)x0 * 2;
-            for (col = x0; col < x1; col++) {
-                unsigned char index = *p++;
-                unsigned short word = (unsigned short)(((sRGB[index][0] >> 3) << 10) |
-                                                       ((sRGB[index][1] >> 3) << 5) |
-                                                       (sRGB[index][2] >> 3));
-
-                *out++ = (char)(word >> 8);
-                *out++ = (char)(word & 0xFF);
-            }
+        if (x0 >= x1) {
+            continue;
         }
-    }
-    else {
-        for (row = firstRow; row < lastRow; row++, rowBase += sScreenRowBytes) {
-            short srcRow = (short)(bandStart + row);
-            short x0 = (short)(originX + sRunFirst[srcRow]);
-            short x1 = (short)(originX + sRunLast[srcRow] + 1);
-            const unsigned char *p;
-            Ptr out;
-
-            if (x0 < viewLeft) {
-                x0 = viewLeft;
-            }
-            if (x1 > viewRight) {
-                x1 = viewRight;
-            }
-            if (x0 >= x1) {
-                continue;
-            }
-            p = bandPixels + (long)row * kSpriteW + (x0 - originX);
-            out = rowBase + x0;
-            for (col = x0; col < x1; col++) {
-                *out++ = sDevice[*p++];
-            }
+        line = (unsigned long *)rowBase + x0;
+        s += (x0 - originX) - first;
+        /* Four pixels per loop test: the copy itself is one move per pixel, so
+         * the compare and branch are what the unroll buys back on a 68000. */
+        while ((short)(x1 - x0) >= 4) {
+            line[0] = s[0];
+            line[1] = s[1];
+            line[2] = s[2];
+            line[3] = s[3];
+            line += 4;
+            s += 4;
+            x0 = (short)(x0 + 4);
+        }
+        while (x0 < x1) {
+            *line++ = *s++;
+            x0 = (short)(x0 + 1);
         }
     }
 }
