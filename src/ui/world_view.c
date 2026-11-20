@@ -229,10 +229,17 @@ static void ComputeVisibleRange(const WorldView *v, const Rect *view, short *xMi
     if (y < *yMin) *yMin = y;
     if (y > *yMax) *yMax = y;
 
-    *xMin -= kWorldZ;
-    *yMin -= kWorldZ;
-    *xMax += kWorldZ;
-    *yMax += kWorldZ;
+    /* Far side: a column one tile past the clip corner can still have its top
+     * diamond poke into the clip, so one tile of slack (two for safety). Near
+     * side: a column up to kWorldZ levels tall draws its top up to
+     * kWorldZ * kTileH/2 pixels above its own ground, which is kWorldZ more
+     * tile-sums, so the near edges need that much more room. The screen-box
+     * test in the traversal makes an over-wide range harmless (it costs an
+     * iteration, not a face), while an under-wide one would clip geometry. */
+    *xMin -= 2;
+    *yMin -= 2;
+    *xMax += kWorldZ + 2;
+    *yMax += kWorldZ + 2;
 
     if (*xMin < 0) *xMin = 0;
     if (*yMin < 0) *yMin = 0;
@@ -241,15 +248,9 @@ static void ComputeVisibleRange(const WorldView *v, const Rect *view, short *xMi
 }
 
 
-static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id)
+static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id, short sx,
+                      short sy)
 {
-    short sx, sy;
-
-    Iso_Project(x, y, z, v->camX, v->camY, &sx, &sy);
-    sx += v->display.left;
-    sy += v->display.top;
-
-
     short topShade   = 256;
     short leftShade  = 256;
     short rightShade = 256;
@@ -346,6 +347,7 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id)
 void WorldView_Draw(const WorldView *v, const Rect *clip)
 {
     short xMin, yMin, xMax, yMax, sum, x, y, sumMax, z, top;
+    Rect box, hit;
 
     ComputeVisibleRange(v, clip, &xMin, &yMin, &xMax, &yMax);
 
@@ -354,19 +356,60 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
     /* Painter order: far columns first, bottom to top within a column. Walking a
      * column at a time costs one TopZ lookup per column and nothing at all for
      * the empty ones outside the island; the old shape walked all 48x48x8 cells
-     * with a bounds-checked World_Get for each. */
+     * with a bounds-checked World_Get for each.
+     *
+     * The tile range above is a bounding box in tile space, and a 45-degree
+     * field seen through a rectangular clip makes that box much larger than the
+     * screen: with a 48x48 field a full frame can put all 2304 columns in the
+     * range while only about a third of them are on screen. Each of those
+     * columns used to pay for its lighting and a sprite call that trimmed to
+     * nothing. The column's own screen box is the exact test, so it runs before
+     * any lighting or blitting and rejects them for the cost of one SectRect. */
     for (sum = (short)(xMin + yMin); sum <= sumMax; sum++) {
         for (x = xMin; x <= xMax; x++) {
+            short sx, sy0;
+
             y = (short)(sum - x);
             if (y < yMin || y > yMax) {
                 continue;
             }
+
+            /* Projection hoisted out of the block loop: one multiply pair per
+             * column, and each level is one subtract from sy0. */
+            sx  = (short)(((x - y) * (kTileW / 2)) + v->camX + v->display.left);
+            sy0 = (short)(((x + y) * (kTileH / 2)) + v->camY + v->display.top);
+
+            /* Conservative box first (as if the column were at full height),
+             * so the columns off screen are rejected before World_TopZ is paid
+             * for. It is a superset of the exact box below, so it can never
+             * reject a column that would have drawn. */
+            SetRect(&box, (short)(sx - kTileW / 2 - 1),
+                    (short)(sy0 - ((kWorldZ - 1) * (kTileH / 2)) - (kTileH / 2) - 1),
+                    (short)(sx + kTileW / 2 + 1), (short)(sy0 + kTileH + 1));
+            if (!SectRect(&box, clip, &hit)) {
+                continue;
+            }
+
             top = World_TopZ(x, y);
+            if (top < 0) {
+                continue;
+            }
+
+            /* Exact box now that the height is known: the top diamond of the
+             * highest block (kTileH/2 above its centre) down to the bottom
+             * vertex of the lowest block's side (kTileH below its centre). */
+            SetRect(&box, (short)(sx - kTileW / 2 - 1),
+                    (short)(sy0 - (top * (kTileH / 2)) - (kTileH / 2) - 1),
+                    (short)(sx + kTileW / 2 + 1), (short)(sy0 + kTileH + 1));
+            if (!SectRect(&box, clip, &hit)) {
+                continue;
+            }
+
             for (z = 0; z <= top; z++) {
                 BlockID id = World_Get(x, y, z);
 
                 if (id != 0) {
-                    DrawBlock(v, x, y, z, id);
+                    DrawBlock(v, x, y, z, id, sx, (short)(sy0 - (z * (kTileH / 2))));
                 }
             }
         }
