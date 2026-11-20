@@ -157,43 +157,11 @@ static short DarkestCorner(const short corners[kLightCorners])
 }
 
 
-static short FloorDivInt(int a, int b)
-{
-    int q = a / b;
-
-    if ((a % b) != 0 && ((a < 0) != (b < 0))) {
-        q--;
-    }
-    return (short)q;
-}
-
-
+/* The inverse projection lives in iso.c: this used to be a second copy of it,
+ * which had already drifted (it clamped silently, Iso_Unproject reports). */
 static void UnprojectClamped(const WorldView *v, short px, short py, short *outX, short *outY)
 {
-    short sx, sy, x, y;
-
-    sx = FloorDivInt((int)px - (int)v->camX, kTileW / 2);
-    sy = FloorDivInt((int)py - (int)v->camY, kTileH / 2);
-
-    x = FloorDivInt((int)sx + (int)sy, 2);
-    y = FloorDivInt((int)sy - (int)sx, 2);
-
-    if (x < 0) {
-        x = 0;
-    }
-    else if (x >= kWorldX) {
-        x = kWorldX - 1;
-    }
-
-    if (y < 0) {
-        y = 0;
-    }
-    else if (y >= kWorldY) {
-        y = kWorldY - 1;
-    }
-
-    *outX = x;
-    *outY = y;
+    Iso_UnprojectClamped(px, py, v->camX, v->camY, outX, outY);
 }
 
 

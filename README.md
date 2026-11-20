@@ -16,12 +16,19 @@ or SE as well as a Quadra.
 
 | Action | Input |
 | --- | --- |
-| Place block | Click an empty column, or the top face of a column |
-| Remove block | Shift-click the top block of a column |
-| Pan camera | Arrow keys or W/A/S/D |
-| Select block | Click a block swatch in the window (dirt, stone, grass) |
+| Walk | Arrow keys or W/A/S/D (hold to keep walking) |
+| Jump | Space |
+| Place block | Click a tile's top face to stack, or its side face to build beside it |
+| Mine block | Hold shift and the mouse button on a block until it breaks |
+| Select block | Click a hotbar swatch, or press 1-9 |
+| Cycle block | T |
+| Recentre view | Walk: the camera follows when you near the edge of the view |
 | New game | Cmd-N |
-| Quit | Cmd-Q |
+| Reset world | Game > Reset World |
+| Quit | Cmd-Q (the world is saved) |
+
+Fourteen block kinds are available; the hotbar shows them all and the selected
+one is outlined.
 
 ## Requirements
 
@@ -56,17 +63,18 @@ The build runs inside the upstream Retro68 Docker image, so nothing needs to be
 installed on the host beyond Docker:
 
 ```bash
-docker run --rm -v "$PWD:/root/work" -w /root/work \
+docker run --rm -v "$PWD:/root/work" \
+  -v "$HOME/Documents/SendToMacOS9/MPW/MPW-GM+PR+Final Updates/Interfaces&Libraries:/ial:ro" \
+  -w /root/work \
   -e APP_VERSION_STR="$(git describe --tags --always --dirty)" \
-  ghcr.io/autc04/retro68 bash -lc 'make build APP_NAME=MacCraft'
+  ghcr.io/autc04/retro68 bash -lc 'make build APP_NAME=MacCraft IAL_DIR=/ial'
 ```
 
 The application is built against Apple's Universal Interfaces (required —
 Retro68's bundled Multiversal set has no `Controls.h`, `Lists.h` or `Scrap.h`),
 which the Makefile stages from `IAL_DIR`; the stock Retro68 image ships none, so
-`IAL_DIR` must point at a copy. Locally, mount one into the container:
-
-```bash
+`IAL_DIR` must point at a copy and the command above mounts one. With a copy
+somewhere else:
 docker run --rm -v "$PWD:/root/work" \
   -v "$HOME/Documents/SendToMacOS9/MPW/MPW-GM+PR+Final Updates/Interfaces&Libraries:/ial:ro" \
   -w /root/work \

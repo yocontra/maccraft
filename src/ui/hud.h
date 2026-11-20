@@ -23,7 +23,7 @@
 #define kHudText    0xE0E0E0UL
 
 /* Number of slot columns the hotbar shows. */
-#define kHudSlots 14
+#define kHudSlots kBlockKinds
 
 /* Tell the HUD where it may draw. Called from the window layout code. */
 void HUD_Layout(const Rect *strip, const Rect *hotbar, const Rect *play);

@@ -27,7 +27,7 @@
 #include "../game/bake.h"
 #include "../game/dither.h"
 
-#define kSpriteKinds 14
+#define kSpriteKinds kBlockKinds
 #define kSpriteBands (kSpriteKinds * 3 * kSpriteShades)
 /* A band is as tall as the tallest face: the top is 16 rows, a side 24. */
 #define kSpriteBandH 24

@@ -162,11 +162,9 @@ void WindowManager_SetForegroundWindow(WindowType windowType)
     /* Update application mode for compatibility with existing code */
     switch (windowType) {
     case kWindowTypeSplash:
-        gAppMode = kModeMainSplash;
         break;
 
     case kWindowTypeGame:
-        gAppMode = kModeGameWindow;
         break;
 
     default:
@@ -231,8 +229,8 @@ static Boolean HandleStandardWindowOps(EventRecord *event)
             /* User clicked window close box */
             if (TrackGoAway(window, event->where)) {
                 if (window == gWindowModules[kWindowTypeSplash].getWindowRef()) {
-                    /* Closing main window quits app */
-                    QuitApplication(false);
+                    /* Closing the main window quits; QuitApplication saves. */
+                    QuitApplication(true);
                 }
                 else if (window == gWindowModules[kWindowTypeGame].getWindowRef()) {
                     /* Closing game window returns to splash screen */
@@ -277,11 +275,9 @@ static void HandleWindowActivation(EventRecord *event)
         if (becomingActive) {
             if (window == gWindowModules[kWindowTypeSplash].getWindowRef()) {
                 gForegroundWindowType = kWindowTypeSplash;
-                gAppMode              = kModeMainSplash;
             }
             else if (window == gWindowModules[kWindowTypeGame].getWindowRef()) {
                 gForegroundWindowType = kWindowTypeGame;
-                gAppMode              = kModeGameWindow;
             }
         }
     }

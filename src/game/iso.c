@@ -66,3 +66,31 @@ Boolean Iso_Unproject(short screenX, short screenY, short camX, short camY,
     *y = ty;
     return true;
 }
+
+void Iso_UnprojectClamped(short screenX, short screenY, short camX, short camY,
+                          short *x, short *y)
+{
+    short sx, sy, tx, ty;
+
+    sx = FloorDiv((short)((int)screenX - (int)camX), kTileW / 2);
+    sy = FloorDiv((short)((int)screenY - (int)camY), kTileH / 2);
+
+    tx = FloorDiv((short)(sx + sy), 2);
+    ty = FloorDiv((short)(sy - sx), 2);
+
+    if (tx < 0) {
+        tx = 0;
+    }
+    else if (tx >= kWorldX) {
+        tx = kWorldX - 1;
+    }
+    if (ty < 0) {
+        ty = 0;
+    }
+    else if (ty >= kWorldY) {
+        ty = kWorldY - 1;
+    }
+
+    *x = tx;
+    *y = ty;
+}

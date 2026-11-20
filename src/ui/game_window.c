@@ -14,12 +14,10 @@
 #include "../game/iso.h"
 #include "../game/scene.h"
 #include "../game/sky.h"
-#include "../game/light.h"
 #include "../game/pick.h"
 #include "../game/player.h"
 #include "../game/save.h"
 #include "../sound/sfx.h"
-#include "../game/texture.h"
 #include "../game/world.h"
 #include "game_window.h"
 #include "hover.h"
@@ -28,7 +26,6 @@
 #include "world_view.h"
 #include "avatar.h"
 #include "sprite_sheet.h"
-#include "utils.h"
 
 /* Module variables */
 static WindowRef sWindow    = NULL;
@@ -65,8 +62,6 @@ static Boolean sJumpHeld = false;
 static unsigned long sIntentUntil = 0;
 
 #define kIntentHoldTicks 12
-static unsigned long sLastPhysicsTick = 0;
-static Boolean sWorldDirty = false;
 
 /* Harness counters: where the seconds actually go. */
 long Sprite_Work[6];
@@ -84,7 +79,6 @@ long Sprite_Phase[3];
 
 
 
-static unsigned long sLastSaveTick = 0;
 static short sWalkPhase = 0;
 
 /* Hold-to-break: shift-click starts mining the tile under the cursor, the idle
@@ -134,28 +128,6 @@ static void MarkDirty(const Rect *r);
 static void FlushDirty(void);
 static void GameWindow_Update(void);
 static void GameWindow_Render(void);
-static void DrawWorld(Rect *view);
-static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
-                      short y3, BlockID id, short face, short shade, short variation);
-
-/* Scene and block palette. The patterns are for 1-bit displays; the colours
- * are what a colour display actually fills with. */
-/* Texture for the colour path. Sparse on purpose: a 50% pattern at 32x16
- * turns into a checkerboard of noise, while one dot per 8x8 cell reads as
- * grain and still lets the base colour dominate. */
-
-
-static const RGBColor kGrassTop    = {0x0000, 0xBB00, 0x2200};
-static const RGBColor kGrassLeft   = {0x0000, 0x5500, 0x0000};
-static const RGBColor kGrassRight  = {0x0000, 0x8800, 0x1800};
-
-static const RGBColor kDirtTop     = {0xAA00, 0x5500, 0x0000};
-static const RGBColor kDirtLeft    = {0x8800, 0x4400, 0x1100};
-static const RGBColor kDirtRight   = {0x8800, 0x4400, 0x0000};
-
-static const RGBColor kStoneTop    = {0xAAAA, 0xAAAA, 0xAAAA};
-static const RGBColor kStoneLeft   = {0x5555, 0x5555, 0x5555};
-static const RGBColor kStoneRight  = {0x8888, 0x8888, 0x8888};
 
 /* Filled polygons take their colour from the *pen pattern*, so a plain
  * 1-bit pattern can only ever be a shade of grey: PaintPoly with qd.white
@@ -375,30 +347,13 @@ static void FlushDirty(void)
     }
 }
 
-/* Face lookups come from src/game/texture.c, which owns the per-block,
- * per-face base colour, base pattern and grain for both display types. */
+
 
 /* Grain patterns: the second tone of each face. On a colour display the base
  * is a solid colour and this pattern is filled in a darker shade of it; on a
  * 1-bit display the base is a pattern and this one is filled in black, so a
  * face still reads as textured on a Macintosh Plus. */
 
-
-static RGBColor Shaded(const RGBColor *base, short factor);
-
-/* One palette step brighter, clamped: the ink of the face texture. */
-
-/* Convert the palette module's colour into the QuickDraw one. The two structs
- * share a field layout on purpose; this is the only place that relies on it. */
-static RGBColor FromBlockColor(BlockColor c)
-{
-    RGBColor result;
-
-    result.red   = c.red;
-    result.green = c.green;
-    result.blue  = c.blue;
-    return result;
-}
 
 
 /* The grain is the same hue, one ramp step down: enough to read as material,
@@ -682,7 +637,6 @@ static void FinishBreak(void)
     }
     if (World_Set(sBreakX, sBreakY, sBreakZ, 0)) {
         Sfx_Play(kSfxBreak);
-        sWorldDirty = true;
     }
     sBreaking = false;
     sBreakTicks = 0;
@@ -913,39 +867,64 @@ static void UpdateHover(void)
     }
 }
 
+/* The crosshair's box, for damage tests: an eleven-pixel cross at the centre of
+ * the play area. */
+static void CrosshairRect(Rect *out)
+{
+    short cx = (short)((sDisplayRect.left + sDisplayRect.right) / 2);
+    short cy = (short)((sDisplayRect.top + sDisplayRect.bottom) / 2);
+
+    SetRect(out, (short)(cx - 6), (short)(cy - 6), (short)(cx + 6), (short)(cy + 6));
+}
+
 /* True when any column under the rect holds water. Water sprites are drawn with
  * see-through pixels, so a repaint that skips the sky fill leaves the previous
- * frame showing through. The scan is padded like the renderer's, and only runs
- * for partial repaints. */
+ * frame showing through.
+ *
+ * The tile span comes from both corners of the rect, padded by one tile: the
+ * old version unprojected one corner and scanned a fixed +/-kWorldZ window,
+ * which is 441 columns by 8 levels -- 3,528 world reads before drawing anything,
+ * for a repaint that covers about a dozen columns. */
 static Boolean RectHasWater(const Rect *r)
 {
-    short gx, gy, x, y;
+    short ax, ay, bx, by, x, y;
+    short xMin, xMax, yMin, yMax;
 
     if (r == NULL || r->right <= r->left || r->bottom <= r->top) {
         return false;
     }
 
-    if (!Iso_Unproject((short)(r->left - sDisplayRect.left),
-                       (short)(r->top - sDisplayRect.top), sCamX, sCamY, &gx, &gy)) {
-        gx = (short)(sDisplayRect.right - sDisplayRect.left);
-        gy = 0;
-        if (!Iso_Unproject((short)(r->right - sDisplayRect.left),
-                           (short)(r->bottom - sDisplayRect.top), sCamX, sCamY, &gx, &gy)) {
-            gx = 0;
-            gy = 0;
-        }
+    Iso_UnprojectClamped((short)(r->left - sDisplayRect.left),
+                         (short)(r->top - sDisplayRect.top),
+                         sCamX, sCamY, &ax, &ay);
+    Iso_UnprojectClamped((short)(r->right - sDisplayRect.left),
+                         (short)(r->bottom - sDisplayRect.top),
+                         sCamX, sCamY, &bx, &by);
+
+    xMin = (short)((ax < bx ? ax : bx) - 1);
+    xMax = (short)((ax > bx ? ax : bx) + 1);
+    yMin = (short)((ay < by ? ay : by) - 1);
+    yMax = (short)((ay > by ? ay : by) + 1);
+
+    /* A rect spanning the whole view still has to see every column, so clamp
+     * to the world rather than trusting the corners. */
+    if (xMin < 0) {
+        xMin = 0;
+    }
+    if (yMin < 0) {
+        yMin = 0;
+    }
+    if (xMax >= kWorldX) {
+        xMax = (short)(kWorldX - 1);
+    }
+    if (yMax >= kWorldY) {
+        yMax = (short)(kWorldY - 1);
     }
 
-    for (y = (short)(gy - kWorldZ - 2); y <= (short)(gy + kWorldZ + 2); y++) {
-        if (y < 0 || y >= kWorldY) {
-            continue;
-        }
-        for (x = (short)(gx - kWorldZ - 2); x <= (short)(gx + kWorldZ + 2); x++) {
+    for (y = yMin; y <= yMax; y++) {
+        for (x = xMin; x <= xMax; x++) {
             short z;
 
-            if (x < 0 || x >= kWorldX) {
-                continue;
-            }
             for (z = 0; z < kWorldZ; z++) {
                 if (World_Get(x, y, z) == kBlockWater) {
                     return true;
@@ -956,6 +935,7 @@ static Boolean RectHasWater(const Rect *r)
 
     return false;
 }
+
 
 
 
@@ -1072,7 +1052,6 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                  World_Get(placeX, placeY, placeZ) == 0 &&
                  World_Set(placeX, placeY, placeZ, (BlockID)(sBlockType + 1))) {
             Sfx_Play(kSfxPlace);
-            sWorldDirty = true;
             sSwingUntil = (unsigned long)TickCount() + 8;
             InvalidateColumn(placeX, placeY, placeZ);
         }
@@ -1409,12 +1388,31 @@ static void GameWindow_Render(void)
         if (sBreaking && sBreakTicks > 0) {
             DrawCrackOverlay(sBreakX, sBreakY, sBreakZ, sBreakTicks);
         }
-        Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
-                    (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
-                    sWalkPhase, (Boolean)!sPlayer.onGround);
+        /* Each overlay is drawn only when the damage can touch it. They were
+         * unconditional, so a hover repaint (about 3,450 pixels) also redrew the
+         * figure, the crosshair and the held block -- the last of those alone is
+         * ~3,000 pixels at 2x magnification -- into pixels that were already
+         * correct. */
+        {
+            Rect overlay;
+            Rect touched;
+
+            PlayerFigureRect(&overlay);
+            if (SectRect(&overlay, &sRenderRect, &touched)) {
+                Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
+                            (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
+                            sWalkPhase, (Boolean)!sPlayer.onGround);
+            }
+            CrosshairRect(&overlay);
+            if (SectRect(&overlay, &sRenderRect, &touched)) {
+                HUD_DrawCrosshair();
+            }
+            HeldBlockRect(&overlay);
+            if (SectRect(&overlay, &sRenderRect, &touched)) {
+                HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
+            }
+        }
         Hover_Draw(&sDisplayRect, sCamX, sCamY);
-        HUD_DrawCrosshair();
-        HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
     }
     else {
@@ -1425,8 +1423,6 @@ static void GameWindow_Render(void)
         Sprite_BeginFrame();
         Sprite_SetView(&sDisplayRect);
         Hover_Draw(&sDisplayRect, sCamX, sCamY);
-        HUD_DrawCrosshair();
-        HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
     }
 
@@ -1480,8 +1476,6 @@ static void GameWindow_Render(void)
         Rect touched;
         Boolean wantsStrip = fullPaint || sStripDirty;
         Boolean wantsHotbar = fullPaint;
-        Boolean wantsHeld = fullPaint;
-        Boolean wantsCross = fullPaint;
 
         chrome = sTitleStripRect;
         UnionRect(&sBlockSelectorRect, &chrome, &chrome);
@@ -1489,11 +1483,6 @@ static void GameWindow_Render(void)
             wantsStrip = false;
             wantsHotbar = false;
         }
-        if (SectRect(&sRenderRect, &sDisplayRect, &touched)) {
-            wantsHeld = true;
-            wantsCross = true;
-        }
-
         Sprite_BeginFrame();
         if (wantsStrip) {
             Sprite_SetView(&sTitleStripRect);
@@ -1515,8 +1504,6 @@ static void GameWindow_Render(void)
             HUD_DrawHotbar((BlockID)(sBlockType + 1), kGameNumBlockTypes);
         }
         Sprite_SetView(&sDisplayRect);
-        (void)wantsHeld;
-        (void)wantsCross;
     }
     Sprite_EndFrame();
 
@@ -1664,10 +1651,7 @@ WindowRef GameWindow_GetWindowRef(void)
 /* Write the world now, for the quit path and the harness. */
 OSErr GameWindow_SaveWorld(void)
 {
-    if (Save_Write() == noErr) {
-        sWorldDirty = false;
-    }
-    return noErr;
+    return Save_Write();
 }
 
 /* Harness hook: walk with the same intent the keyboard sets, for a number of

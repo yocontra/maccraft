@@ -25,6 +25,12 @@
 #define kBoxSlack 2
 
 static Boolean sValid = false;
+/* The last query, so a pass that both handles an event and then idles does not
+ * run the picker twice for the same pointer. */
+static Point sLastQuery = {-1, -1};
+static short sLastCamX = 0;
+static short sLastCamY = 0;
+static Boolean sHaveQuery = false;
 static short sTileX = 0;
 static short sTileY = 0;
 static short sLevel = 0;
@@ -52,6 +58,7 @@ static void BoxFor(short x, short y, short z, Rect *out)
 void Hover_Reset(void)
 {
     sValid = false;
+    sHaveQuery = false;
 }
 
 Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
@@ -70,6 +77,15 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
     sDisplay = *display;
     sCamX = camX;
     sCamY = camY;
+
+    if (sHaveQuery && local.h == sLastQuery.h && local.v == sLastQuery.v &&
+        camX == sLastCamX && camY == sLastCamY) {
+        return false;
+    }
+    sLastQuery = local;
+    sLastCamX = camX;
+    sLastCamY = camY;
+    sHaveQuery = true;
 
     if (PtInRect(local, display)) {
         valid = Pick_Tile((short)(local.h - display->left),

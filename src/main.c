@@ -18,7 +18,6 @@
 #include "ui/window_manager.h"
 
 /* Application mode tracking (used by multiple modules) */
-short gAppMode = kModeMainSplash;
 
 /*********************************************************************
  * MAIN PROGRAM

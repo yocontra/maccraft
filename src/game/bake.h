@@ -76,9 +76,7 @@ void Bake_FaceShaded(const unsigned char *tex, short face, short factor,
  */
 #if !defined(MACCRAFT_HOST_TEST) && defined(__MACTYPES__)
 #include <Quickdraw.h>
-void Bake_Blit(GrafPtr port, short left, short top,
-               const unsigned char *pixels, const unsigned char *mask,
-               short width, short height);
+
 #endif
 
 #endif /* BAKE_H */

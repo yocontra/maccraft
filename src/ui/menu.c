@@ -22,32 +22,28 @@ void UpdateMenus(void)
     MenuRef gameMenu = GetMenu(kMenuGame);
     WindowRef w      = FrontWindow();
 
-    /* First determine which window is in front to properly set menu items */
-    switch (gAppMode) {
-    case kModeMainSplash:
-        /* In splash mode, Close is disabled unless a window is open */
-        if (w && w == WindowManager_GetWindowRef(kWindowTypeSplash))
-            EnableItem(fileMenu, kItemClose); /* Can close main window */
-        else
-            DisableItem(fileMenu, kItemClose);
-
-        /* Always enable New Game menu item in splash mode */
-        EnableItem(fileMenu, kItemNewGame);
-
-        /* Disable Game menu in splash mode */
-        DisableItem(gameMenu, 0); /* Disable entire menu */
-        break;
-
-    case kModeGameWindow:
-        /* In game mode, Close will close the game window */
+    /* Menu state follows the window manager's foreground state. This used to
+     * read gAppMode, a second copy of the same fact that could go stale; ask the
+     * owner instead. */
+    if (WindowManager_GetForegroundWindowType() == kWindowTypeGame) {
+        /* Game mode: Close closes the game window, and the Game menu is live. */
         if (w && w == WindowManager_GetWindowRef(kWindowTypeGame))
-            EnableItem(fileMenu, kItemClose); /* Can close game window */
+            EnableItem(fileMenu, kItemClose);
         else
             DisableItem(fileMenu, kItemClose);
 
-        /* Enable Game menu in game mode */
-        EnableItem(gameMenu, 0); /* Enable entire menu */
-        break;
+        EnableItem(gameMenu, 0);
+    }
+    else {
+        /* Splash mode: Close closes the main window, New Game is always
+         * available, and the Game menu is disabled outright. */
+        if (w && w == WindowManager_GetWindowRef(kWindowTypeSplash))
+            EnableItem(fileMenu, kItemClose);
+        else
+            DisableItem(fileMenu, kItemClose);
+
+        EnableItem(fileMenu, kItemNewGame);
+        DisableItem(gameMenu, 0);
     }
 }
 
@@ -71,7 +67,7 @@ void DoMenuCommand(long menuCommand)
         switch (menuItem) {
         case kItemNewGame:
             /* This switches between modes */
-            if (gAppMode == kModeMainSplash || !WindowManager_IsWindowVisible(kWindowTypeGame)) {
+            if (!WindowManager_IsWindowVisible(kWindowTypeGame)) {
                 /* Open game window and close splash window only on success */
                 WindowManager_OpenWindow(kWindowTypeGame);
                 if (WindowManager_IsWindowVisible(kWindowTypeGame)) {
@@ -100,8 +96,9 @@ void DoMenuCommand(long menuCommand)
                     WindowManager_OpenWindow(kWindowTypeSplash);
                 }
                 else if (w == WindowManager_GetWindowRef(kWindowTypeSplash)) {
-                    /* Close main window (not normally done - usually = quit) */
-                    QuitApplication(false);
+                    /* Closing the main window quits, and the world is saved
+                     * here rather than at the caller: it is the only copy. */
+                    QuitApplication(true);
                 }
                 else {
                     /* Other window */
@@ -111,16 +108,13 @@ void DoMenuCommand(long menuCommand)
             break;
 
         case kItemQuit:
-            /* Save the world before quitting: a build that vanishes on relaunch
-             * is not a game. */
-            GameWindow_SaveWorld();
-            QuitApplication(false);
+            QuitApplication(true);
             break;
         }
     }
     else if (menuID == kMenuGame) {
         /* Only handle game menu commands when in game mode */
-        if (gAppMode == kModeGameWindow && WindowManager_IsWindowVisible(kWindowTypeGame)) {
+        if (WindowManager_IsWindowVisible(kWindowTypeGame)) {
             /* Handle game menu items */
             switch (menuItem) {
             case kItemToggleBlock:

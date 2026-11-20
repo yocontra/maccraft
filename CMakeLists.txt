@@ -31,7 +31,6 @@ set(SRC_C
     src/ui/game_window.c
     src/ui/about_window.c
     src/ui/window_manager.c
-    src/ui/utils.c
     src/ui/hover.c
     src/ui/hud.c
     src/ui/remote.c
@@ -44,13 +43,11 @@ set(SRC_C
     src/game/player.c
     src/game/save.c
     src/sound/sfx.c
-    src/game/texture.c
     src/game/dither.c
     src/game/light.c
     src/game/blocks.c
     src/game/art.c
     src/game/bake.c
-    src/game/bake_quickdraw.c
     src/game/scene.c
     src/game/sky.c
 )
@@ -64,7 +61,6 @@ set(HEADER_FILES
     src/ui/game_window.h
     src/ui/about_window.h
     src/ui/window_manager.h
-    src/ui/utils.h
     src/ui/hover.h
     src/ui/hud.h
     src/ui/remote.h
@@ -77,7 +73,6 @@ set(HEADER_FILES
     src/game/player.h
     src/game/save.h
     src/sound/sfx.h
-    src/game/texture.h
     src/game/dither.h
     src/game/light.h
     src/game/blocks.h

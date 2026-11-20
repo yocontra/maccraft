@@ -4,6 +4,9 @@
 #include <Controls.h>
 #include <Lists.h>
 #include <Quickdraw.h>
+
+/* kBlockKinds: the palette size is defined once, in blocks.h. */
+#include "game/blocks.h"
 #include <TextEdit.h>
 #include <Windows.h>
 
@@ -104,7 +107,7 @@ enum {
 /* Game view constants. Block ids are 1-based (0 = empty): the selected swatch
  * index sBlockType maps to block id sBlockType + 1. */
 enum {
-    kGameNumBlockTypes      = 14,
+    kGameNumBlockTypes      = kBlockKinds,
     /* 14 kinds must fit the selector width: 14 * (18 + 8) - 8 = 356 px. The old
      * 24/12 pitch needed 492 px, so the outer swatches were clipped away and the
      * strip silently showed a subset of the palette. */
@@ -121,7 +124,6 @@ enum {
  *********************************************************************/
 
 /* External declarations for global variables defined in main.c */
-extern short gAppMode; /* Current application mode */
 
 
 #endif /* CONSTANTS_H */

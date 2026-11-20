@@ -15,7 +15,7 @@
  * There is no float anywhere: every operation is integer, rounded to the
  * nearest step, so results are identical on every machine.
  *
- * The face numbers match texture.h's kFaceTop/kFaceLeft/kFaceRight (0/1/2)
+ * The face numbers match the kBlockFace* enum in blocks.h (0/1/2)
  * but are declared here under their own names so this header stays
  * independent of the QuickDraw-dependent texture module.  A caller may pass
  * either set of constants.
