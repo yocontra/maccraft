@@ -56,6 +56,9 @@ static Boolean sHoverValid = false;
 static short sHoverX = 0;
 static short sHoverY = 0;
 static short sHoverZ = 0; /* Block selector area at bottom */
+/* Set when the world changed under a stationary pointer (a block placed or
+ * mined), so the next hover pass re-picks instead of trusting the old tile. */
+static Boolean sHoverStale = true;
 static Rect sDisplayRect;       /* Game view area */
 
 /* Camera offset in display-local coordinates (see Iso_Project). */
@@ -118,28 +121,48 @@ static short sCamY = 0;
 static short sBlockType = 0;
 
 /* Pending repaint: state changes record the smallest affected rect here and
- * GameWindow_Idle turns it into an InvalRect, so painting only ever happens
- * inside a BeginUpdate/EndUpdate pass. */
+ * GameWindow_Idle paints exactly that rect, then tells the Window Manager it is
+ * clean. Painting straight from the idle loop instead of through an
+ * invalidation is what keeps the screen from flickering: an update pass starts
+ * with the Window Manager erasing the region it hands over, so every damage --
+ * a hover box moving, a block landing, a scroll strip -- would be wiped white
+ * and then drawn again, one flash per change. */
 static Boolean sDirty = false;
-/* The status strip is redrawn directly from the idle loop instead of through an
- * invalidation. Every InvalRect lands in the same update region, and the region's
- * bounding box is what the paint uses -- so invalidating the strip together with
- * a selection box over the island made the world repaint from the top of the view
- * down to the pointer, on every move between tiles. */
+/* The status strip is redrawn directly too. Invalidating it together with a
+ * selection box over the island made the update region's bounding box cover
+ * both, so the world repainted from the top of the view to the pointer on every
+ * move between tiles. */
 static Boolean sStripDirty = false;
 static Rect sDirtyRect;
 
-/* Intersection of the display rect with the current update region's bounds,
- * so an update pass only walks the tiles it can actually paint. */
+/* The rect this paint pass may touch, in port coordinates: everything that went
+ * dirty since the last paint, clipped to the port. */
+static Rect sDamageRect;
+
+/* Within it, the part that lies in the play area: what the world pass may draw
+ * over. A partial paint walks only the tiles inside this rect, so a hover box
+ * costs a handful of faces instead of a whole frame. */
 static Rect sRenderRect;
+
+/* Set when the world changed under the frame (a block placed or removed). A
+ * camera pan scrolls the previous frame, which would then show the world as it
+ * was, so a stale frame is always recomposed instead. */
+static Boolean sFrameStale = false;
+
+/* The sky. One flat blue, written through the pixel path so the colour is
+ * exactly what is asked for; the mono path keeps Sky_Draw's dither. */
+#define kSkyColour 0x78A7FFUL
 
 /* Private function declarations */
 static void MarkDirty(const Rect *r);
+static void SelectBlockType(short index);
 static void FlushDirty(void);
 static void GameWindow_Update(void);
-static void GameWindow_Render(void);
-static void GameWindow_DrawOverlay(void);
-static void DrawWorld(Rect *view);
+static void GameWindow_Paint(const Rect *damage);
+static void PaintDisplayBand(const Rect *band, Boolean clouds);
+static void PaintOverlays(const Rect *clip);
+static void DrawClouds(const Rect *clip);
+static Boolean WindowUpdateRect(WindowRef window, Rect *out);
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
                       short y3, BlockID id, short face, short shade, short variation);
 
@@ -337,6 +360,15 @@ void GameWindow_Dispose(void)
     sInitialized = false;
     sIsVisible   = false;
     sDirty       = false;
+
+    /* Forget the frame: the next window gets a full first paint instead of
+     * scrolling a picture that belonged to the old one. */
+    sHaveFrame  = false;
+    sFrameStale = false;
+    sHoverValid = false;
+    sHoverStale = true;
+    sLastCamX   = 0;
+    sLastCamY   = 0;
 }
 
 /* Record a rect that needs repainting. */
@@ -355,29 +387,76 @@ static void MarkDirty(const Rect *r)
     }
 }
 
-/* Turn a pending repaint into an InvalRect, so drawing only ever happens
- * inside a BeginUpdate/EndUpdate pass. */
+/* Narrow a damage rect to the part of the window that is actually ours to
+ * paint: the port, and the visible region's bounds. The pixel path writes
+ * straight to screen memory rather than through the port's clip, so a rect that
+ * reached under a window in front would paint on that window. */
+static Boolean ClipToVisible(WindowRef window, Rect *r)
+{
+    Rect box;
+
+    if (window == NULL || r == NULL) {
+        return false;
+    }
+    if (!SectRect(r, &window->portRect, r)) {
+        return false;
+    }
+    if (window->visRgn != NULL) {
+        box = (*window->visRgn)->rgnBBox;
+        if (!SectRect(r, &box, r)) {
+            return false;
+        }
+    }
+    return (Boolean)(r->right > r->left && r->bottom > r->top);
+}
+
+/* Paint the pending rect now, and tell the Window Manager it is clean.
+ *
+ * The alternative -- InvalRect and wait for an update event -- makes the Window
+ * Manager erase the rect before handing it over, so every hover step, every
+ * placed block and every scroll strip flashes the background colour and is then
+ * drawn again. Painting the pixels first and validating the same rect afterwards
+ * means the region is never dirty as far as the Window Manager is concerned, so
+ * nothing is ever erased: the only pixels that change are the ones being
+ * repainted. */
 static void FlushDirty(void)
 {
     Rect r;
+    GrafPtr saved;
 
-    if (!sDirty || !sInitialized || sWindow == NULL) {
+    if (!sDirty) {
+        return;
+    }
+    if (!sInitialized || sWindow == NULL || !sIsVisible) {
+        sDirty = false;
         return;
     }
 
     r = sDirtyRect;
     sDirty = false;
 
+    if (!ClipToVisible(sWindow, &r)) {
+        return;
+    }
 
+    GetPort(&saved);
+    SetPort(sWindow);
 
-    {
-        GrafPtr saved;
-
-        GetPort(&saved);
-        SetPort(sWindow);
+    /* Painting directly is only safe while this window owns those screen pixels:
+     * an inactive window can have the Finder's windows or a dialog in front of
+     * it, and the pixel path writes to the screen, not through the clip. A
+     * background window keeps the damage and takes the slower update path. */
+    if (FrontWindow() != sWindow) {
         InvalRect(&r);
         SetPort(saved);
+        return;
     }
+
+    GameWindow_Paint(&r);
+
+    /* The pixels are there: drop the region without erasing. */
+    ValidRect(&r);
+    SetPort(saved);
 }
 
 /* Face lookups come from src/game/texture.c, which owns the per-block,
@@ -470,9 +549,8 @@ static void ApplyRemoteCommand(const char *cmd)
         short n = TakeInt(&p);
 
         if (n >= 1 && n <= kGameNumBlockTypes) {
-            sBlockType = (short)(n - 1);
             Sfx_Play(kSfxClick);
-            MarkDirty(&sBlockSelectorRect);
+            SelectBlockType((short)(n - 1));
             Remote_SetResult("select");
         }
         else {
@@ -685,6 +763,10 @@ static void FinishBreak(void)
     if (World_Set(sBreakX, sBreakY, sBreakZ, 0)) {
         Sfx_Play(kSfxBreak);
         sWorldDirty = true;
+        /* The frame on screen still shows the block, so a camera scroll must not
+         * be trusted: this paint has to recompose. */
+        sFrameStale = true;
+        sHoverStale = true;
     }
     sBreaking = false;
     sBreakTicks = 0;
@@ -744,6 +826,29 @@ static void HeldBlockRect(Rect *out)
 {
     SetRect(out, (short)(sDisplayRect.right - 130), (short)(sDisplayRect.bottom - 100),
             (short)(sDisplayRect.right - 10), (short)(sDisplayRect.bottom - 8));
+}
+
+/* Pick a block for the hotbar. The held block is drawn inside the play area, so
+ * its rect is damaged too: otherwise the hand keeps showing the previous kind
+ * until something else happens to repaint that corner. */
+static void SelectBlockType(short index)
+{
+    Rect held;
+
+    if (index < 0) {
+        index = 0;
+    }
+    if (index >= kGameNumBlockTypes) {
+        index = (short)(kGameNumBlockTypes - 1);
+    }
+    if (index == sBlockType) {
+        return;
+    }
+
+    sBlockType = index;
+    MarkDirty(&sBlockSelectorRect);
+    HeldBlockRect(&held);
+    MarkDirty(&held);
 }
 
 /* The rectangle the player's figure occupies at its current position. */
@@ -811,7 +916,7 @@ static void CentreOnPlayer(void)
  * play area do not land on this port, and the sky is painted by the sprite
  * layer for exactly that reason. Positions come from sky.c, which owns the
  * layout, so the mono path and this one agree on where clouds are. */
-static void DrawClouds(void)
+static void DrawClouds(const Rect *clip)
 {
     short rectCount = Sky_CloudRectCount();
     short shift = Sky_CloudShift((long)TickCount());
@@ -819,7 +924,10 @@ static void DrawClouds(void)
     short cx, cy, cw, ch, uy;
     long x;
 
-    for (x = (long)sRenderRect.left - Sky_CloudPeriod(); x < (long)sRenderRect.right;
+    if (clip == NULL) {
+        return;
+    }
+    for (x = (long)clip->left - Sky_CloudPeriod(); x < (long)clip->right;
          x += Sky_CloudPeriod()) {
         for (i = 0; i < rectCount; i++) {
             Rect slab;
@@ -827,15 +935,15 @@ static void DrawClouds(void)
             Sky_CloudRect(i, &cx, &cy, &cw, &ch, &uy);
             slab.left = (short)(x + cx + shift);
             slab.right = (short)(slab.left + cw);
-            slab.top = (short)(sRenderRect.top + uy);
+            slab.top = (short)(clip->top + uy);
             slab.bottom = (short)(slab.top + 1);
 
-            if (slab.right <= sRenderRect.left || slab.left >= sRenderRect.right) {
+            if (slab.right <= clip->left || slab.left >= clip->right) {
                 continue;
             }
             Sprite_FillRect(&slab, 0xC8C8D8UL); /* shaded underside */
 
-            slab.top = (short)(sRenderRect.top + cy);
+            slab.top = (short)(clip->top + cy);
             slab.bottom = (short)(slab.top + ch);
             Sprite_FillRect(&slab, 0xFFFFFFUL);
         }
@@ -896,8 +1004,8 @@ static BlockID HoveredBlock(void)
     return World_Get(sHoverX, sHoverY, (short)(sHoverZ - 1));
 }
 
-/* Follow the mouse. Moving between cells invalidates only the two selection
- * boxes and the status strip, so hovering costs a few hundred pixels of drawing
+/* Follow the mouse. Moving between cells repaints only the two selection boxes
+ * and the status strip, so hovering costs a few hundred pixels of drawing
  * rather than a full frame. */
 static void UpdateHover(void)
 {
@@ -907,15 +1015,24 @@ static void UpdateHover(void)
 
     /* GetMouse is in global coordinates; the picker works in the window's. */
     static Point sLastMouse = {-1, -1};
+    static short sLastPickCamX = -1;
+    static short sLastPickCamY = -1;
+    static Boolean sPicked = false;
 
     GetMouse(&mouse);
-    if (!sHoverValid && mouse.h == sLastMouse.h && mouse.v == sLastMouse.v) {
-        /* Nothing moved and we already know the answer (including "nothing
-         * there"): the pick searches every column near the pointer and runs on
-         * every idle tick, so skipping it matters more than it looks. */
+    if (sPicked && !sHoverStale && mouse.h == sLastMouse.h && mouse.v == sLastMouse.v &&
+        sCamX == sLastPickCamX && sCamY == sLastPickCamY) {
+        /* Nothing moved, the camera did not move and the world did not change:
+         * the answer is still the one on screen. The pick scans columns under
+         * the pointer and used to run on every idle tick, which cost more than
+         * the paint did. */
         return;
     }
     sLastMouse = mouse;
+    sLastPickCamX = sCamX;
+    sLastPickCamY = sCamY;
+    sPicked = true;
+    sHoverStale = false;
     {
         GrafPtr saved;
 
@@ -936,7 +1053,9 @@ static void UpdateHover(void)
     if (sHoverValid) {
         Rect old;
 
-        SelectionBoxRect(sHoverX, sHoverY, sHoverZ, &old);
+        /* Same level the box is drawn at (the block's own z), or the damage sits
+         * one step above it and the bottom of the old box is never repainted. */
+        SelectionBoxRect(sHoverX, sHoverY, (short)(sHoverZ - 1), &old);
         MarkDirty(&old);
     }
 
@@ -948,57 +1067,13 @@ static void UpdateHover(void)
     if (valid) {
         Rect now;
 
-        SelectionBoxRect(sHoverX, sHoverY, sHoverZ, &now);
+        SelectionBoxRect(sHoverX, sHoverY, (short)(sHoverZ - 1), &now);
         MarkDirty(&now);
     }
 
-    /* The readout follows the pointer, but it is repainted outside the update
-     * region: see sStripDirty. */
+    /* The readout follows the pointer in the title strip, which is repainted by
+     * the idle loop through this flag. */
     sStripDirty = true;
-}
-
-/* True when any column under the rect holds water. Water sprites are drawn with
- * see-through pixels, so a repaint that skips the sky fill leaves the previous
- * frame showing through. The scan is padded like the renderer's, and only runs
- * for partial repaints. */
-static Boolean RectHasWater(const Rect *r)
-{
-    short gx, gy, x, y;
-
-    if (r == NULL || r->right <= r->left || r->bottom <= r->top) {
-        return false;
-    }
-
-    if (!Iso_Unproject((short)(r->left - sDisplayRect.left),
-                       (short)(r->top - sDisplayRect.top), sCamX, sCamY, &gx, &gy)) {
-        gx = (short)(sDisplayRect.right - sDisplayRect.left);
-        gy = 0;
-        if (!Iso_Unproject((short)(r->right - sDisplayRect.left),
-                           (short)(r->bottom - sDisplayRect.top), sCamX, sCamY, &gx, &gy)) {
-            gx = 0;
-            gy = 0;
-        }
-    }
-
-    for (y = (short)(gy - kWorldZ - 2); y <= (short)(gy + kWorldZ + 2); y++) {
-        if (y < 0 || y >= kWorldY) {
-            continue;
-        }
-        for (x = (short)(gx - kWorldZ - 2); x <= (short)(gx + kWorldZ + 2); x++) {
-            short z;
-
-            if (x < 0 || x >= kWorldX) {
-                continue;
-            }
-            for (z = 0; z < kWorldZ; z++) {
-                if (World_Get(x, y, z) == kBlockWater) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    return false;
 }
 
 /* The selection box: Minecraft's black wireframe on the block you are looking
@@ -1056,9 +1131,6 @@ static void DrawSelectionBox(short x, short y, short z)
     SetRect(&run, (short)(sx + kTileW / 2 - 1), (short)(sy),
             (short)(sx + kTileW / 2), (short)(sy + kTileH));
     Sprite_FillRect(&run, 0x000000UL);
-
-    Sprite_SetView(&sDisplayRect);
-    Sprite_EndFrame();
 }
 
 /* Draw one block: top diamond plus its two visible side faces, all centred on
@@ -1173,6 +1245,8 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                  World_Set(placeX, placeY, placeZ, (BlockID)(sBlockType + 1))) {
             Sfx_Play(kSfxPlace);
             sWorldDirty = true;
+            sFrameStale = true;
+            sHoverStale = true;
             sSwingUntil = (unsigned long)TickCount() + 8;
             InvalidateColumn(placeX, placeY, placeZ);
         }
@@ -1189,8 +1263,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
             HUD_SlotRect(i, kGameNumBlockTypes, &blockRect);
             if (PtInRect(localPt, &blockRect)) {
                 Sfx_Play(kSfxClick);
-                sBlockType = i;
-                MarkDirty(&sBlockSelectorRect);
+                SelectBlockType(i);
                 return true;
             }
         }
@@ -1242,18 +1315,13 @@ static Boolean GameWindow_HandleKeyDown(char key)
      * palette the strip shows instead of only the first three kinds. */
     case '1': case '2': case '3': case '4': case '5':
     case '6': case '7': case '8': case '9':
-        sBlockType = (short)(key - '1');
-        if (sBlockType >= kGameNumBlockTypes) {
-            sBlockType = (short)(kGameNumBlockTypes - 1);
-        }
         Sfx_Play(kSfxClick);
-        MarkDirty(&sBlockSelectorRect);
+        SelectBlockType((short)(key - '1'));
         return true;
 
     case 't':
     case 'T': /* Cycle block type */
-        sBlockType = (short)((sBlockType + 1) % kGameNumBlockTypes);
-        MarkDirty(&sBlockSelectorRect);
+        SelectBlockType((short)((sBlockType + 1) % kGameNumBlockTypes));
         return true;
 
     case kLeftArrowKey:
@@ -1315,29 +1383,124 @@ static void GameWindow_HandleActivate(Boolean becomingActive)
 
 /* "MacCraft" on the left, block and camera readout on the right. */
 
-/* Render the game window contents. Only called between BeginUpdate/EndUpdate. */
-
-static void GameWindow_Render(void)
+/* Paint one band of the play area: sky, clouds, world, then the overlays that
+ * sit inside the play area. Every write is clipped to the band by the sprite
+ * layer's view, so the cost is proportional to the band -- a hover box is two
+ * small rects, a scroll's exposed strip is a strip -- and not to the view. The
+ * sky is refilled first every time: it is the background the world is drawn on,
+ * so a face that moved, a block that went away or a pixel of water that is
+ * see-through cannot leave the previous frame showing through, and on a band
+ * this size the fill is a few hundred stores, not a visible flash. */
+static void PaintDisplayBand(const Rect *band, Boolean clouds)
 {
-    Rect strip;
-    PenState savedPen;
-    Boolean fullPaint = false;
+    Rect clip;
+    WorldView view;
 
-    if (!sInitialized || sWindow == NULL) {
+    if (band == NULL || band->right <= band->left || band->bottom <= band->top) {
+        return;
+    }
+    /* A damage rect is allowed to poke a pixel or two past the play area (the
+     * hover box reaches for its outline); the sky fill must not, or the paint
+     * would leave sky-coloured pixels in the margin it is not repainting. */
+    if (!SectRect(band, &sDisplayRect, &clip)) {
         return;
     }
 
-    SetPort(sWindow);
-    GetPenState(&savedPen);
-    {
-        /* Paint timing for the harness: Sprite_Work[2] accumulates ticks spent
-         * painting and [3] counts paints, so average frame cost is one divide. */
-        static unsigned long sPaintStart = 0;
+    view.display  = sDisplayRect;
+    view.camX     = sCamX;
+    view.camY     = sCamY;
+    view.hasColor = sHasColor;
 
-        sPaintStart = (unsigned long)TickCount();
-        sPaintStart = sPaintStart; /* start */
-        Sprite_Work[4] = (long)sPaintStart;
+    if (sHasColor && Sprite_Ready()) {
+        Sprite_BeginFrame();
+        Sprite_SetView(&clip);
+        Sprite_FillRect(&clip, kSkyColour);
+        if (clouds) {
+            DrawClouds(&clip);
+        }
+        WorldView_Draw(&view, &clip);
+        Sprite_SetView(&sDisplayRect);
+        Sprite_EndFrame();
     }
+    else {
+        /* One-bit screen, or a screen the pixel layer cannot address: the
+         * dithered sky and the polygon world pass, clipped by the port (the
+         * caller has already narrowed it to the band). */
+        ClipRect(&clip);
+        Sky_Draw(sWindow, clip, sHasColor, (long)TickCount());
+        WorldView_Draw(&view, &clip);
+        SetClip(NULL);
+    }
+}
+
+/* Everything drawn on top of the world, inside the play area: the crack on a
+ * block being mined, the figure, the crosshair, the held block, the hover box.
+ * Clipped to `clip` so a partial repaint does not redraw all of them; after a
+ * camera scroll the previous frame moved under them, so the caller passes the
+ * whole play area in that case. */
+static void PaintOverlays(const Rect *clip)
+{
+    Rect area;
+
+    if (clip == NULL || clip->right <= clip->left || clip->bottom <= clip->top) {
+        return;
+    }
+    if (!sHasColor || !Sprite_Ready()) {
+        return;
+    }
+    /* Overlays belong to the play area, and the pixel path clips to the rect it
+     * is given: a damage rect that pokes past the frame must not let the hover
+     * box write into the margin, which nothing repaints. */
+    if (!SectRect(clip, &sDisplayRect, &area)) {
+        return;
+    }
+
+    Sprite_BeginFrame();
+    Sprite_SetView(&area);
+    if (sBreaking && sBreakTicks > 0) {
+        DrawCrackOverlay(sBreakX, sBreakY, sBreakZ, sBreakTicks);
+    }
+    Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
+                (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect, sWalkPhase,
+                (Boolean)!sPlayer.onGround);
+    HUD_DrawCrosshair();
+    HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
+    if (sHoverValid) {
+        DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+    }
+    Sprite_SetView(&sDisplayRect);
+    Sprite_EndFrame();
+}
+
+/* Paint `damage`, in port coordinates. Called from the update pass with the
+ * region the Window Manager says is gone, and from the idle loop with the rect
+ * the game itself damaged; both then validate it instead of leaving it dirty. */
+static void GameWindow_Paint(const Rect *damage)
+{
+    Rect strip;
+    PenState savedPen;
+    Boolean firstPaint;
+    Boolean fullPaint = false;
+    Boolean margins;
+    Boolean scrolled = false;
+    Rect bands[4];
+    short bandCount = 0;
+
+    if (!sInitialized || sWindow == NULL || damage == NULL) {
+        return;
+    }
+
+    firstPaint = (Boolean)!sHaveFrame;
+
+    SetPort(sWindow);
+    /* The play area is painted by writing into screen memory, which includes the
+     * pixels under the pointer: the hover box is drawn right there. Without
+     * taking the cursor down first it is left smeared or half erased until the
+     * Window Manager happens to redraw it, which reads as a flicker at the tile
+     * being pointed at. */
+    HideCursor();
+    GetPenState(&savedPen);
+    Sprite_Work[4] = (long)(unsigned long)TickCount();
 
     /* The window can be dragged, so the offset used for direct screen writes is
      * recomputed here rather than captured once at creation. */
@@ -1350,187 +1513,147 @@ static void GameWindow_Render(void)
         Sprite_SetOrigin(origin.h, origin.v);
     }
 
-    /* World drawing is limited to whole tiles, so it covers the display rect;
-     * BeginUpdate has already clipped the port to the update region, which is
-     * what keeps a one-column invalidation from repainting the rest. */
-    /* Repaint only what the update region asks for: QuickDraw fills are clipped
-     * by the port, and the world pass trims its direct pixel writes to this
-     * rect, so a small invalidation -- the selection box moving under the mouse
-     * -- costs a few hundred pixels instead of a full frame. */
+    /* What this pass may touch, and the part of it inside the play area. The
+     * damage rect is the whole answer to flicker: the world pass walks only the
+     * tiles this rect covers, so a hover box or a placed block repaints a few
+     * hundred pixels instead of the framework. */
+    sDamageRect = *damage;
+    if (!SectRect(&sDamageRect, &sWindow->portRect, &sDamageRect)) {
+        SetRect(&sDamageRect, 0, 0, 0, 0);
+    }
+
     if (!sHaveFrame) {
-        /* First paint after launch: repaint everything. The update region at that
-         * moment can be smaller than the window (the first invalidate is often
-         * just the strip), and the sky and world writes are scoped to this rect,
-         * so taking it at face value left most of the window white. */
+        /* First paint after launch: everything, whatever was asked for. */
         sRenderRect = sDisplayRect;
     }
-    else {
-        /* The update region lives in the window's visRgn; GetClip returns the
-         * port's clip, which is the whole port and says nothing about what this
-         * paint is for. Reading the clip made every paint look like a full
-         * window, so every pointer move repainted the world from the sky. */
-        if (sWindow->visRgn != NULL) {
-            Rect box = (*sWindow->visRgn)->rgnBBox;
-
-
-            if (!SectRect(&box, &sDisplayRect, &sRenderRect)) {
-                SetRect(&sRenderRect, 0, 0, 0, 0);
-            }
-        }
-        else {
-            sRenderRect = sDisplayRect;
-        }
+    else if (!SectRect(&sDamageRect, &sDisplayRect, &sRenderRect)) {
+        SetRect(&sRenderRect, 0, 0, 0, 0);
     }
 
-    /* Only a full repaint clears anything. A partial one -- the pointer moving
-     * between tiles is the common case -- must draw over what is already there:
-     * whitening the frame and filling sky first is what produced the pale square
-     * around the selection box while the blocks were being drawn, and it left a
-     * white square behind whenever the world pass drew no tiles for that rect. */
     fullPaint = (Boolean)(sRenderRect.left == sDisplayRect.left &&
                           sRenderRect.right == sDisplayRect.right &&
                           sRenderRect.top == sDisplayRect.top &&
                           sRenderRect.bottom == sDisplayRect.bottom);
 
-    Sprite_Phase[0] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]);
+    /* The margins outside the play area only need erasing when the damage
+     * actually reaches them. A full recompose of the play area -- every camera
+     * pan does one -- used to repaint four white strips round it for nothing. */
+    margins = (Boolean)(fullPaint && (firstPaint ||
+                                      sDamageRect.left   < sDisplayRect.left ||
+                                      sDamageRect.top    < sDisplayRect.top ||
+                                      sDamageRect.right  > sDisplayRect.right ||
+                                      sDamageRect.bottom > sDisplayRect.bottom));
+
+    Sprite_Phase[0] = 0;
     Sprite_Phase[1] = 0;
     Sprite_Phase[2] = 0;
 
-    /* The play area is never whitened before it is drawn: the world pass covers
-     * every pixel of it, and erasing first is exactly the white box that showed
-     * up whenever a region was dirty. Only the margins outside the play area are
-     * erased, below. */
-
-    /* Play area background. Not black: with a colour port QuickDraw fills from
-     * the pen pattern, so a dark background plus dark fills made the entire
-     * view a black rectangle. White pattern + RGB background colour gives a
-     * solid tint on colour displays and white on 1-bit ones. */
     DetectColor();
+
     /* A camera pan with nothing else dirty is the common case while walking.
      * Rather than recompose every visible face, shift the frame that is already
-     * on screen and redraw only the strip that the shift exposes. */
-    if (sHaveFrame && Sprite_Ready() &&
-        sRenderRect.left == sDisplayRect.left && sRenderRect.right == sDisplayRect.right &&
-        sRenderRect.top == sDisplayRect.top && sRenderRect.bottom == sDisplayRect.bottom &&
+     * on screen and repaint only the strip that the shift exposes. The shift is
+     * a copy of the pixels that are already there, so nothing is ever erased:
+     * the exposed strip is the only part that has to be drawn. */
+    if (sHaveFrame && fullPaint && !sFrameStale && Sprite_Ready() &&
         (sCamX != sLastCamX || sCamY != sLastCamY)) {
         short dx = (short)(sCamX - sLastCamX);
         short dy = (short)(sCamY - sLastCamY);
         short w = (short)(sDisplayRect.right - sDisplayRect.left);
         short h = (short)(sDisplayRect.bottom - sDisplayRect.top);
 
-        /* Any pan that stays inside the view may scroll. The old limit of two
-         * tiles sent every real pan -- the camera leaves the dead zone a fifth of
-         * the view away -- down the full-recompose path at 61 ticks a frame,
-         * which is the second-per-step the game felt like. */
+        /* Any pan that stays inside the view may scroll. A limit of two tiles
+         * sent every real pan -- the camera leaves the play area by more than
+         * that on the first step -- down the full-recompose path. */
         if (dx > -w && dx < w && dy > -h && dy < h) {
-            Rect exposed;
-
             Sprite_BeginFrame();
             Sprite_ScrollRect(&sDisplayRect, dx, dy);
             Sprite_EndFrame();
 
-            /* The exposed strip is a band on the side the content came from, plus
-             * the orthogonal band at the top or bottom: one rectangle covering
-             * both is simpler and still small. */
-            exposed = sDisplayRect;
+            /* Two bands, not one rect covering both: a diagonal pan's bounding
+             * box is most of the view, and repainting that is the flash the
+             * scroll exists to avoid. The slack is the widest face that can
+             * straddle the seam. */
             if (dx > 0) {
-                exposed.right = (short)(exposed.left + dx + kTileW);
+                SetRect(&bands[bandCount], sDisplayRect.left, sDisplayRect.top,
+                        (short)(sDisplayRect.left + dx + kTileW), sDisplayRect.bottom);
+                bandCount++;
             }
             else if (dx < 0) {
-                exposed.left = (short)(exposed.right + dx - kTileW);
+                SetRect(&bands[bandCount], (short)(sDisplayRect.right + dx - kTileW),
+                        sDisplayRect.top, sDisplayRect.right, sDisplayRect.bottom);
+                bandCount++;
             }
             if (dy > 0) {
-                exposed.top = (short)(exposed.top - 0);
-                exposed.bottom = (short)(sDisplayRect.top + dy + kTileH * 2);
+                SetRect(&bands[bandCount], sDisplayRect.left, sDisplayRect.top,
+                        sDisplayRect.right, (short)(sDisplayRect.top + dy + kTileH * 2));
+                bandCount++;
             }
             else if (dy < 0) {
-                exposed.bottom = (short)(sDisplayRect.bottom + dy + kTileH * 2);
+                SetRect(&bands[bandCount], sDisplayRect.left,
+                        (short)(sDisplayRect.bottom + dy - kTileH * 2),
+                        sDisplayRect.right, sDisplayRect.bottom);
+                bandCount++;
             }
-            if (dx == 0) {
-                exposed.left = sDisplayRect.left;
-                exposed.right = sDisplayRect.right;
+
+            /* The crosshair and the held block sit at fixed screen positions, so
+             * the scroll moved their pixels away from where they belong. Their
+             * old pixels are painted over here, or a copy of each is left behind
+             * on the world every time the camera moves -- the "flicker" that
+             * moving around produces. */
+            {
+                short cx = (short)((sDisplayRect.left + sDisplayRect.right) / 2);
+                short cy = (short)((sDisplayRect.top + sDisplayRect.bottom) / 2);
+                Rect hud[2];
+                short i;
+
+                SetRect(&hud[0], (short)(cx - 8), (short)(cy - 8),
+                        (short)(cx + 8), (short)(cy + 8));
+                HeldBlockRect(&hud[1]);
+                for (i = 0; i < 2 && bandCount < 4; i++) {
+                    OffsetRect(&hud[i], dx, dy);
+                    if (SectRect(&hud[i], &sDisplayRect, &hud[i])) {
+                        bands[bandCount] = hud[i];
+                        bandCount++;
+                    }
+                }
             }
-            if (dy == 0) {
-                exposed.top = sDisplayRect.top;
-                exposed.bottom = sDisplayRect.bottom;
-            }
-            sRenderRect = exposed;
+            scrolled = true;
         }
     }
 
-    Sprite_PaintedPixels +=
-        (long)(sRenderRect.right - sRenderRect.left) *
-        (long)(sRenderRect.bottom - sRenderRect.top);
+    /* A camera move that could not be scrolled -- no pixel layer, a jump larger
+     * than the view, or a world change under the frame -- has to recompose. */
+    if ((sCamX != sLastCamX || sCamY != sLastCamY) && !scrolled) {
+        sRenderRect = sDisplayRect;
+    }
 
-    if (sHasColor && Sprite_Ready()) {
-        /* The sky is rewritten when the view changed, and whenever the repainted
-         * rect could contain water: water is drawn with see-through pixels, so
-         * painting it over old content leaves whatever was there -- the pale
-         * specks around a hovered water tile. */
-        if (fullPaint || sCamX != sLastCamX || sCamY != sLastCamY ||
-            RectHasWater(&sRenderRect)) {
-            /* Minecraft's sky: one flat blue with flat white clouds, painted
-             * through the pixel path so the colours are exactly what is asked
-             * for. Scoped to the repaint rect: these writes bypass the update
-             * clip, so filling the whole display here would erase the island on
-             * every partial invalidation (a block placement, a hover move). */
-            Sprite_BeginFrame();
-            Sprite_SetView(&sRenderRect);
-            Sprite_FillRect(&sRenderRect, 0x78A7FFUL);
-            DrawClouds();
-            Sprite_SetView(&sDisplayRect);
-            Sprite_EndFrame();
+    if (scrolled) {
+        short i;
+
+        for (i = 0; i < bandCount; i++) {
+            Sprite_PaintedPixels += (long)(bands[i].right - bands[i].left) *
+                                    (long)(bands[i].bottom - bands[i].top);
+            PaintDisplayBand(&bands[i], true);
         }
+        /* The scroll moved the overlays with the world, so they are redrawn
+         * where they now belong, over the whole play area. */
+        PaintOverlays(&sDisplayRect);
     }
-    else if (fullPaint) {
-        /* One-bit screen: Sky_Draw's dither ramp is the better picture. */
-        Sky_Draw(sWindow, sDisplayRect, sHasColor, (long)TickCount());
-    }
-
-    /* World blocks (nothing to do when only the selector strip was dirty) */
-
-    if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
-        /* The screen stays locked for the whole pass: the HUD draws through the
-         * same pixel path as the world, so releasing it before the HUD left the
-         * held block with nothing to write into. */
-        Sprite_BeginFrame();
-        Sprite_SetView(&sRenderRect);
-        {
-            WorldView view;
-
-            view.display = sDisplayRect;
-            view.camX = sCamX;
-            view.camY = sCamY;
-            view.hasColor = sHasColor;
-            WorldView_Draw(&view, &sRenderRect);
-        }
-        Sprite_SetView(&sDisplayRect);
-
-        if (sBreaking && sBreakTicks > 0) {
-            DrawCrackOverlay(sBreakX, sBreakY, sBreakZ, sBreakTicks);
-        }
-        Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
-                    (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
-                    sWalkPhase, (Boolean)!sPlayer.onGround);
-        HUD_DrawCrosshair();
-        HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
-        Sprite_EndFrame();
-    }
-    else {
-        /* A paint that only touches the strip still has to keep the HUD, which
-         * lives inside the play area: the world pixels are written directly and
-         * survive, but QuickDraw's clip can suppress these, so they are drawn
-         * whenever the play area is anywhere in the clip. */
-        Sprite_BeginFrame();
-        HUD_DrawCrosshair();
-        HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
-        Sprite_EndFrame();
+    else if (sRenderRect.right > sRenderRect.left && sRenderRect.bottom > sRenderRect.top) {
+        Sprite_PaintedPixels += (long)(sRenderRect.right - sRenderRect.left) *
+                                (long)(sRenderRect.bottom - sRenderRect.top);
+        PaintDisplayBand(&sRenderRect, true);
+        PaintOverlays(&sRenderRect);
     }
 
-    if (fullPaint) {
+    Sprite_Phase[1] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]) -
+                      Sprite_Phase[0];
+
+    if (margins) {
         /* Erase the margins so a partially visible edge tile cannot bleed outside
-         * the display rect (no manual clipping anywhere). Only on a full repaint;
-         * on a partial one the margins were not damaged. */
+         * the display rect (no manual clipping anywhere). Only when the damage
+         * reaches them; a play-area-only repaint leaves them alone. */
         BackColor(whiteColor);
         BackPat(&qd.white);
 
@@ -1567,28 +1690,20 @@ static void GameWindow_Render(void)
         FrameRect(&sDisplayRect);
     }
 
-    Sprite_Phase[1] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]) - Sprite_Phase[0];
-
     /* The chrome is skipped when the damage cannot touch it: a pointer move
-     * repaints two boxes in the play area, and redrawing the strip, the hotbar
-     * and the held block for that costs as much again as the world pass. */
+     * repaints two boxes in the play area, and redrawing the strip and the
+     * hotbar for that costs as much again as the world pass. When the margins
+     * were erased above, both strips went with them and have to come back. */
     {
-        Rect chrome;
         Rect touched;
-        Boolean wantsStrip = fullPaint || sStripDirty;
-        Boolean wantsHotbar = fullPaint;
-        Boolean wantsHeld = fullPaint;
-        Boolean wantsCross = fullPaint;
+        Boolean wantsStrip = (Boolean)(sStripDirty || margins);
+        Boolean wantsHotbar = margins;
 
-        chrome = sTitleStripRect;
-        UnionRect(&sBlockSelectorRect, &chrome, &chrome);
-        if (!SectRect(&sRenderRect, &chrome, &touched)) {
-            wantsStrip = false;
-            wantsHotbar = false;
+        if (!wantsStrip && SectRect(&sDamageRect, &sTitleStripRect, &touched)) {
+            wantsStrip = true;
         }
-        if (SectRect(&sRenderRect, &sDisplayRect, &touched)) {
-            wantsHeld = true;
-            wantsCross = true;
+        if (!wantsHotbar && SectRect(&sDamageRect, &sBlockSelectorRect, &touched)) {
+            wantsHotbar = true;
         }
 
         Sprite_BeginFrame();
@@ -1603,16 +1718,15 @@ static void GameWindow_Render(void)
             HUD_DrawHotbar((BlockID)(sBlockType + 1), kGameNumBlockTypes);
         }
         Sprite_SetView(&sDisplayRect);
-        (void)wantsHeld;
-        (void)wantsCross;
+        Sprite_EndFrame();
     }
-    Sprite_EndFrame();
 
     Sprite_Phase[2] = (long)((unsigned long)TickCount() - (unsigned long)Sprite_Work[4]) - Sprite_Phase[0] - Sprite_Phase[1];
 
     sLastCamX = sCamX;
     sLastCamY = sCamY;
     sHaveFrame = true;
+    sFrameStale = false;
 
     {
         unsigned long now = (unsigned long)TickCount();
@@ -1622,47 +1736,56 @@ static void GameWindow_Render(void)
     }
 
     SetPenState(&savedPen);
+    ShowCursor();
 }
 
-/* Handle update events for the game window */
-static void GameWindow_Update(void)
+/* Bounding box of a window's pending update region, in port coordinates: the
+ * Window Manager's way of saying those pixels are gone (an uncovered window, a
+ * moved window). A window record keeps the region in updateRgn, and BeginUpdate
+ * empties it, so this has to be read first. */
+static Boolean WindowUpdateRect(WindowRef window, Rect *out)
 {
-    if (!sInitialized || sWindow == NULL) {
-        return;
+    WindowPeek peek = (WindowPeek)window;
+
+    if (out == NULL || peek == NULL || peek->updateRgn == NULL) {
+        return false;
     }
 
-    SetPort(sWindow);
-    BeginUpdate(sWindow);
-
-    GameWindow_Render();
-
-    EndUpdate(sWindow);
-
-    /* After the update pass: no update region, so the wireframe lands on the
-     * block it belongs to instead of being clipped away. */
-    GameWindow_DrawOverlay();
+    *out = (*peek->updateRgn)->rgnBBox;
+    if (!SectRect(out, &window->portRect, out)) {
+        return false;
+    }
+    return (Boolean)(out->right > out->left && out->bottom > out->top);
 }
 
-/* Everything drawn on top of the finished frame, with no update region in the
- * way: the selection box is QuickDraw, and a stroke made inside BeginUpdate is
- * clipped to the damage, which is what left the old box on screen and made the
- * highlight look like it belonged to another tile. */
-static void GameWindow_DrawOverlay(void)
+/* Handle update events for the game window. The Window Manager sends one when
+ * pixels it was responsible for are gone -- the window was uncovered, moved, or
+ * shown. The usual answer is BeginUpdate, draw, EndUpdate; BeginUpdate erases
+ * the region first, which is a visible flash of the background colour over a
+ * frame that took a second to build. Instead the region is painted and then
+ * validated, exactly as the idle path does: the same pixels end up on screen,
+ * nothing is erased in between, and the region is just as clean afterwards. */
+static void GameWindow_Update(void)
 {
+    Rect damage;
     GrafPtr saved;
 
-    if (!sInitialized || sWindow == NULL || !sIsVisible || !sHoverValid) {
+    if (!sInitialized || sWindow == NULL || !sIsVisible) {
+        return;
+    }
+    if (!WindowUpdateRect(sWindow, &damage)) {
+        return;
+    }
+    if (!ClipToVisible(sWindow, &damage)) {
         return;
     }
 
     GetPort(&saved);
     SetPort(sWindow);
-    SetClip(NULL);
-    PenNormal();
-    PenSize(1, 1);
-    ForeColor(blackColor);
-    PenPat(&qd.black);
-    DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+
+    GameWindow_Paint(&damage);
+    ValidRect(&damage);
+
     SetPort(saved);
 }
 
@@ -1756,7 +1879,8 @@ void GameWindow_Show(Boolean visible)
         SelectWindow(sWindow);
         sIsVisible = true;
 
-        /* The update event performs the actual drawing. */
+        /* Paint now, and validate the region ShowWindow left behind: waiting for
+         * the update event would let the Window Manager erase the window first. */
         MarkDirty(&sWindow->portRect);
         FlushDirty();
     }
@@ -1883,6 +2007,8 @@ void GameWindow_ResetWorld(void)
     Scene_BuildIsland();
     Player_Spawn(&sPlayer, 24, 24, (short)(World_TopZ(24, 24) + 1));
     CentreOnPlayer();
+    sFrameStale = true;
+    sHoverStale = true;
     MarkDirty(&sDisplayRect);
     FlushDirty();
 }
@@ -1981,11 +2107,10 @@ void GameWindow_ToggleBlockType(void)
         return;
     }
 
-    sBlockType = (short)((sBlockType + 1) % kGameNumBlockTypes);
-    MarkDirty(&sBlockSelectorRect);
+    SelectBlockType((short)((sBlockType + 1) % kGameNumBlockTypes));
 }
 
-/* Perform idle processing: turn a recorded dirty rect into an InvalRect. */
+/* Perform idle processing: paint whatever went dirty straight to the screen. */
 void GameWindow_Idle(void)
 {
     static unsigned long sFrontFirst = 0;
