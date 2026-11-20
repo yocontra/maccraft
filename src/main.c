@@ -112,7 +112,10 @@ int main(void)
 
         /* Placeholder for future audio idle function */
 
-        if (WaitNextEvent(everyEvent, &event, 6, NULL)) {
+        /* One tick, not six: the simulation advances in the idle pass, so the
+         * delay is the frame interval. Six ticks capped it at ~10 passes a
+         * second, which is where the stutter came from. */
+        if (WaitNextEvent(everyEvent, &event, 1, NULL)) {
             /* MenuKey resolves every Cmd-key menu equivalent */
             if (event.what == keyDown && (event.modifiers & cmdKey)) {
                 long menuCommand = MenuKey(event.message & charCodeMask);
@@ -126,10 +129,13 @@ int main(void)
             /* Delegate all event handling to the window manager */
             WindowManager_HandleEvent(&event);
         }
-        else {
-            /* Perform idle processing when there are no events */
-            WindowManager_Idle();
-        }
+
+        /* Idle on every pass, not only when WaitNextEvent times out. A held key
+         * delivers an autoKey event every few ticks, so the timeout rarely
+         * expires: with idle in the else branch the simulation advanced only
+         * between bursts -- movement stalled, gravity ran at a fraction of its
+         * rate, and the world only caught up when the keyboard went quiet. */
+        WindowManager_Idle();
     }
 
     return 0;
