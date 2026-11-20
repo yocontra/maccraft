@@ -295,6 +295,9 @@ static void PutBand(short band, short width, short height, short shade, short fa
     }
 }
 
+/* Built once by Sprite_Init below; the cache lives with the draw paths. */
+static void ClearTopCache(void);
+
 Boolean Sprite_Init(void)
 {
     GDHandle gd = GetMainDevice();
@@ -316,6 +319,7 @@ Boolean Sprite_Init(void)
     BuildRGBTable();
     BuildShadeMap();
     BuildDeviceMap();
+    ClearTopCache();
 
     for (id = 1; id <= kSpriteKinds; id++) {
         for (face = 0; face < 3; face++) {
@@ -520,6 +524,95 @@ void Sprite_Dispose(void)
     sReady = false;
 }
 
+/* Expanded top faces.
+ *
+ * The sheet stores one palette index per pixel, so the fast 32-bit path did a
+ * byte load plus a scaled table load for every pixel.  Expanding a top band
+ * into its final 32-bit words once turns the hot loop into a word copy
+ * (`move.l (a2)+,(a3)+` on the 68000), roughly twice as fast per pixel.
+ *
+ * Only tops are cached, and only three of them.  A flat field draws about 2300
+ * tops against a few hundred sides, so the tops are where the pixels are,
+ * while the whole sheet expanded would be half a megabyte.  Three slots hold
+ * the kinds and shade steps a frame actually uses; a miss draws through the
+ * palette path it always used and fills the least recently used slot, so one
+ * new shade costs a single expansion instead of thrashing every face.  Nothing
+ * invalidates an entry: the sheet is built once in Sprite_Init.
+ */
+#define kTopSlots 3
+#define kTopRows kSpriteH
+
+static unsigned long sTopWords[kTopSlots][kTopRows][kSpriteW];
+static short sTopTag[kTopSlots]; /* band + 1; 0 = empty */
+static unsigned long sTopAge[kTopSlots];
+static unsigned long sTopClock;
+
+static void ClearTopCache(void)
+{
+    short slot;
+
+    for (slot = 0; slot < kTopSlots; slot++) {
+        sTopTag[slot] = 0;
+        sTopAge[slot] = 0;
+    }
+    sTopClock = 0;
+}
+
+/* NULL when the band is not cached; the caller then draws through the palette
+ * path, which is byte-for-byte what the sprite used to do. */
+static const unsigned long *TopCacheFind(short band)
+{
+    short slot;
+
+    for (slot = 0; slot < kTopSlots; slot++) {
+        if (sTopTag[slot] == (short)(band + 1)) {
+            sTopAge[slot] = ++sTopClock;
+            return sTopWords[slot][0];
+        }
+    }
+    return NULL;
+}
+
+/* Expand a top band into the least recently used slot.  A top face is kSpriteW
+ * wide and kTopRows tall; only those rows are read, the rows below belong to
+ * the side faces of the same band number.  Only the inked run of each row is
+ * expanded -- the rest of the diamond is transparent and the draw loop never
+ * reads it -- so a miss costs one face's worth of lookups, not two. */
+static void TopCacheStore(short band)
+{
+    short slot;
+    short lru = 0;
+    short row;
+    short col;
+    const unsigned char *src;
+    unsigned long *dst;
+
+    for (slot = 1; slot < kTopSlots; slot++) {
+        if (sTopAge[slot] < sTopAge[lru]) {
+            lru = slot;
+        }
+    }
+
+    src = sSheet + (long)band * kSpriteBandH * kSpriteW;
+    dst = sTopWords[lru][0];
+    for (row = 0; row < kTopRows; row++) {
+        short srcRow = (short)(band * kSpriteBandH + row);
+        short first = sRunFirst[srcRow];
+        short last = sRunLast[srcRow];
+        const unsigned char *s = src + first;
+        unsigned long *d = dst + first;
+
+        for (col = first; col <= last; col++) {
+            *d++ = sPixel32[*s++];
+        }
+        src += kSpriteW;
+        dst += kSpriteW;
+    }
+
+    sTopTag[lru] = (short)(band + 1);
+    sTopAge[lru] = ++sTopClock;
+}
+
 /* Harness probes: Sprite_Probe[0] != 0 makes Sprite_Draw return immediately, so
  * the cost of the copy can be separated from the cost of deciding to draw;
  * [1] counts calls. */
@@ -546,6 +639,7 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
     short firstRow, lastRow;
     Ptr bandPixels;
     Ptr rowBase;
+    const unsigned long *topWords;
 
     if (!sReady || id == 0 || sScreenBase == NULL) {
         return;
@@ -570,7 +664,7 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
     if (originX >= viewRight || (short)(originX + width) <= viewLeft) {
         return;
     }
-    if (originY >= sScreenHeight || (short)(originX + width) <= 0) {
+    if (originY >= sScreenHeight || (short)(originY + height) <= 0) {
         return;
     }
     if (originX >= sScreenWidth) {
@@ -598,6 +692,14 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
     /* One multiply for the first row, then the pointer walks: the old code did a
      * multiply per row per face, which is 32,000 multiplies a frame. */
     rowBase = sScreenBase + (long)(originY + firstRow) * sScreenRowBytes;
+
+    /* An expanded top face, if this one is already in the cache. Sides keep the
+     * palette path: they are a small minority of the pixels and caching them
+     * would need the extra rows a top does not use. */
+    topWords = NULL;
+    if (sDepth >= 32 && scale == 1 && face == 0) {
+        topWords = TopCacheFind(band);
+    }
 
     /* The depth branch is hoisted out of the row loop: one test per face instead
      * of one per row. */
@@ -681,11 +783,29 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
             if (x0 >= x1) {
                 continue;
             }
-            p = bandPixels + (long)row * kSpriteW + (x0 - originX);
             line = (unsigned long *)rowBase + x0;
-            for (col = x0; col < x1; col++) {
-                *line++ = sPixel32[*p++];
+            if (topWords != NULL) {
+                /* Cached top: a word copy per row, which is the whole point of
+                 * the cache (one instruction per pixel on the 68000). */
+                const unsigned long *w =
+                    topWords + (short)(row * kSpriteW) + (x0 - originX);
+
+                for (col = x0; col < x1; col++) {
+                    *line++ = *w++;
+                }
             }
+            else {
+                p = bandPixels + (long)row * kSpriteW + (x0 - originX);
+                for (col = x0; col < x1; col++) {
+                    *line++ = sPixel32[*p++];
+                }
+            }
+        }
+
+        /* First sight of a top band this frame: the face itself was drawn the
+         * old way, and the expansion pays for the next two thousand. */
+        if (face == 0 && topWords == NULL) {
+            TopCacheStore(band);
         }
     }
     else if (sDepth == 16) {
