@@ -212,8 +212,14 @@ Boolean Remote_Launch(const char *name)
     static unsigned char sFork[kForkBuffer];
     short dirRef;
     long dirID;
+    /* Each launch gets its own file. Reusing one name meant launching a file the
+     * Finder or the previous launch still had open, which is where the silent
+     * "launch failed" replies came from. */
+    static short sLaunchSeq = 0;
+    char seqDigits[2];
 
     if (vRef == 0 || name == NULL || name[0] == '\0') {
+        Remote_SetResult("launch: no name");
         return false;
     }
     while (name[i] != '\0' && i < 31) {
@@ -223,63 +229,102 @@ Boolean Remote_Launch(const char *name)
     pname[0] = (unsigned char)i;
 
     if (FSMakeFSSpec(vRef, 0, pname, &src) != noErr) {
+        Remote_SetResult("launch: no app in share");
         return false;
     }
 
-    /* Destination: Preferences, next to the save file. */
     if (FindFolder(kOnSystemDisk, kPreferencesFolderType, kCreateFolder, &srcRef, &dirID) != noErr) {
+        Remote_SetResult("launch: no Preferences");
         return false;
     }
-    destName[0] = 15;
-    memcpy(destName + 1, "MacCraft build", 14);
+
+    /* "MacCraft run N", N cycling 1..8, so old copies are replaced rather than
+     * accumulating. */
+    sLaunchSeq = (short)(sLaunchSeq % 8);
+    seqDigits[0] = (char)('1' + sLaunchSeq);
+    {
+        static const char prefix[] = "MacCraft run ";
+        short n = 0;
+
+        destName[0] = 15;
+        while (prefix[n] != '\0') {
+            destName[n + 1] = (unsigned char)prefix[n];
+            n++;
+        }
+        destName[n + 1] = (unsigned char)seqDigits[0];
+    }
+    sLaunchSeq++;
+
     FSMakeFSSpec(srcRef, dirID, destName, &dest);
+    FSpDelete(&dest); /* an old copy of this slot; its absence is fine */
 
-    /* Copy the data fork. */
-    if (FSpOpenDF(&src, fsRdPerm, &srcRef) == noErr) {
-        SetEOF(0, 0);
-        if (FSpCreate(&dest, 'MCft', 'APPL', smSystemScript) != noErr &&
-            FSpCreate(&dest, 'MCft', 'APPL', smSystemScript) != dupFNErr) {
-            /* An existing file of that name is fine: it is about to be replaced. */
-        }
-        if (FSpOpenDF(&dest, fsRdWrPerm, &dstRef) == noErr) {
-            SetEOF(dstRef, 0);
-            for (;;) {
-                count = kForkBuffer;
-                err = FSRead(srcRef, &count, sFork);
-                if (count > 0) {
-                    long wrote = count;
-
-                    FSWrite(dstRef, &wrote, sFork);
-                }
-                if (err != noErr || count == 0) {
-                    break;
-                }
-            }
-            FSClose(dstRef);
-        }
-        FSClose(srcRef);
+    err = FSpCreate(&dest, 'MCft', 'APPL', smSystemScript);
+    if (err != noErr && err != dupFNErr) {
+        Remote_SetResult("launch: create failed");
+        return false;
     }
 
-    /* Copy the resource fork, which is where the code lives. */
-    if (FSpOpenRF(&src, fsRdPerm, &srcRef) == noErr) {
-        if (FSpOpenRF(&dest, fsWrPerm, &dstRef) == noErr) {
-            SetEOF(dstRef, 0);
-            for (;;) {
-                count = kForkBuffer;
-                err = FSRead(srcRef, &count, sFork);
-                if (count > 0) {
-                    long wrote = count;
-
-                    FSWrite(dstRef, &wrote, sFork);
-                }
-                if (err != noErr || count == 0) {
-                    break;
-                }
-            }
-            FSClose(dstRef);
-        }
-        FSClose(srcRef);
+    /* Data fork (usually empty: the code lives in the resource fork). */
+    if (FSpOpenDF(&src, fsRdPerm, &srcRef) != noErr) {
+        Remote_SetResult("launch: no data fork");
+        return false;
     }
+    if (FSpOpenDF(&dest, fsRdWrPerm, &dstRef) != noErr) {
+        FSClose(srcRef);
+        Remote_SetResult("launch: data open failed");
+        return false;
+    }
+    SetEOF(dstRef, 0);
+    for (;;) {
+        count = kForkBuffer;
+        err = FSRead(srcRef, &count, sFork);
+        if (count > 0) {
+            long wrote = count;
+
+            if (FSWrite(dstRef, &wrote, sFork) != noErr) {
+                FSClose(dstRef);
+                FSClose(srcRef);
+                Remote_SetResult("launch: data write failed");
+                return false;
+            }
+        }
+        if (err != noErr || count == 0) {
+            break;
+        }
+    }
+    FSClose(dstRef);
+    FSClose(srcRef);
+
+    /* Resource fork: the code. */
+    if (FSpOpenRF(&src, fsRdPerm, &srcRef) != noErr) {
+        Remote_SetResult("launch: no resource fork");
+        return false;
+    }
+    if (FSpOpenRF(&dest, fsWrPerm, &dstRef) != noErr) {
+        FSClose(srcRef);
+        Remote_SetResult("launch: resource open failed");
+        return false;
+    }
+    SetEOF(dstRef, 0);
+    for (;;) {
+        count = kForkBuffer;
+        err = FSRead(srcRef, &count, sFork);
+        if (count > 0) {
+            long wrote = count;
+
+            if (FSWrite(dstRef, &wrote, sFork) != noErr) {
+                FSClose(dstRef);
+                FSClose(srcRef);
+                Remote_SetResult("launch: resource write failed");
+                return false;
+            }
+        }
+        if (err != noErr || count == 0) {
+            break;
+        }
+    }
+    FSClose(dstRef);
+    FSClose(srcRef);
 
     memset(&pb, 0, sizeof(pb));
     pb.launchBlockID      = extendedBlock;
@@ -289,7 +334,32 @@ Boolean Remote_Launch(const char *name)
     pb.launchAppSpec      = &dest;
     pb.launchAppParameters = NULL;
 
-    if (LaunchApplication(&pb) != noErr) {
+    err = LaunchApplication(&pb);
+    if (err != noErr) {
+        char msg[40];
+        char *q = msg;
+
+        *q++ = 'l'; *q++ = 'a'; *q++ = 'u'; *q++ = 'n'; *q++ = 'c';
+        *q++ = 'h'; *q++ = ' '; *q++ = 'r'; *q++ = 'c'; *q++ = '=';
+        {
+            short digits[6];
+            short n = 0;
+            long v = (long)err;
+
+            if (v < 0) {
+                *q++ = '-';
+                v = -v;
+            }
+            do {
+                digits[n++] = (short)(v % 10);
+                v /= 10;
+            } while (v > 0 && n < 5);
+            while (n > 0) {
+                *q++ = (char)('0' + digits[--n]);
+            }
+        }
+        *q = '\0';
+        Remote_SetResult(msg);
         return false;
     }
 
