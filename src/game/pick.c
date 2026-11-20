@@ -18,6 +18,8 @@
  * painter order, i.e. the one drawn on top.
  */
 
+#include <stddef.h>   /* NULL, for the callers that do not want a face */
+
 #include "pick.h"
 
 #include "iso.h"

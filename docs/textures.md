@@ -18,7 +18,8 @@ picture exactly: flat faces, pixel art, one shade per axis.
 
 `tests/host/test_art.c` and `tests/host/test_bake.c` prove the art is legal and
 distinct and that the bake is a bijection onto the silhouette (256 inked pixels
-for a top face, 128 for a side), deterministic and monotone under shading.
+per face: a top is 256 texels over its diamond, a side is sixteen texels in each
+of sixteen columns), deterministic and monotone under shading.
 
 ## The two facts that took the longest, and are worth keeping
 
