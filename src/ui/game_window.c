@@ -22,6 +22,7 @@
 #include "../game/texture.h"
 #include "../game/world.h"
 #include "game_window.h"
+#include "hover.h"
 #include "hud.h"
 #include "remote.h"
 #include "world_view.h"
@@ -52,10 +53,6 @@ static short Swing(void)
     }
     return (short)left;
 }
-static Boolean sHoverValid = false;
-static short sHoverX = 0;
-static short sHoverY = 0;
-static short sHoverZ = 0; /* Block selector area at bottom */
 static Rect sDisplayRect;       /* Game view area */
 
 /* Camera offset in display-local coordinates (see Iso_Project). */
@@ -79,7 +76,6 @@ long Sprite_Work[6];
 long Sprite_PaintedPixels;
 /* Times the selection box has been drawn: tells "never called" from "drawn but
  * invisible". */
-long Sprite_BoxDraws;
 /* Ticks spent in each phase of the last paint: setup, world pass, chrome. */
 long Sprite_Phase[3];
 /* Last painted rectangle: width and height, for the harness receipt. */
@@ -138,7 +134,6 @@ static void MarkDirty(const Rect *r);
 static void FlushDirty(void);
 static void GameWindow_Update(void);
 static void GameWindow_Render(void);
-static void GameWindow_DrawOverlay(void);
 static void DrawWorld(Rect *view);
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
                       short y3, BlockID id, short face, short shade, short variation);
@@ -639,17 +634,20 @@ static void ApplyRemoteCommand(const char *cmd)
             char hover[40];
             char *q = hover;
             Point m;
-
+            GrafPtr savedPort;
+            GetPort(&savedPort);
+            SetPort(sWindow);
             GetMouse(&m);
-            *q++ = (char)(sHoverValid ? 'V' : '-');
+            SetPort(savedPort);
+
+            *q++ = (char)(Hover_Valid() ? 'V' : '-');
             *q++ = ' ';
             {   /* window-space cursor, then the hovered tile */
                 short vals[3];
                 short k;
 
                 vals[0] = (short)(m.h - sDisplayRect.left);
-                vals[1] = sHoverX;
-                vals[2] = sHoverY;
+                Hover_Tile(&vals[1], &vals[2], NULL);
                 for (k = 0; k < 3; k++) {
                     short digits[6];
                     short n = 0;
@@ -852,19 +850,20 @@ static void DrawClouds(void)
 /* Bounding box of the selection box for a tile, with a pixel of slack for the
  * outline. Used to invalidate just the old and new hover cells when the mouse
  * moves. */
-static void SelectionBoxRect(short x, short y, short z, Rect *out)
+/* The screen box of a tile, for the crack overlay and for damage. */
+static void TileBox(short x, short y, short z, Rect *out)
 {
     short sx, sy;
 
     Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
-    sx += sDisplayRect.left;
-    sy += sDisplayRect.top;
+    sx = (short)(sx + sDisplayRect.left);
+    sy = (short)(sy + sDisplayRect.top);
     SetRect(out, (short)(sx - kTileW / 2 - 2), (short)(sy - kTileH / 2 - 2),
             (short)(sx + kTileW / 2 + 2), (short)(sy + kTileH / 2 + kTileH + 2));
 }
 
-/* Which surface the given point in the play area refers to. Raised terrain is
- * picked on its visible top face: see game/pick.c, which owns the search. */
+/* The pick for a click: the same call the hover uses, plus which face of the
+ * block the point is on, so a wall can be built against. */
 static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *outZ)
 {
     if (!PtInRect(localPt, &sDisplayRect)) {
@@ -875,7 +874,6 @@ static Boolean PickSurfaceAt(Point localPt, short *outX, short *outY, short *out
                      sCamX, sCamY, outX, outY, outZ);
 }
 
-/* Same pick, plus which face of the block the point is on. */
 static Boolean PickSurfaceAtFace(Point localPt, short *outX, short *outY, short *outZ,
                                  short *outFace)
 {
@@ -887,74 +885,32 @@ static Boolean PickSurfaceAtFace(Point localPt, short *outX, short *outY, short 
                          sCamX, sCamY, outX, outY, outZ, outFace);
 }
 
-/* The block under the hover, which is what the strip reports as "look". */
-static BlockID HoveredBlock(void)
-{
-    if (!sHoverValid || sHoverZ <= 0) {
-        return 0;
-    }
-    return World_Get(sHoverX, sHoverY, (short)(sHoverZ - 1));
-}
-
-/* Follow the mouse. Moving between cells invalidates only the two selection
- * boxes and the status strip, so hovering costs a few hundred pixels of drawing
- * rather than a full frame. */
+/* Resolve the pointer through the hover module and damage what changed. */
 static void UpdateHover(void)
 {
     Point mouse;
-    short x, y, z;
-    Boolean valid;
+    Rect dirty;
 
-    /* GetMouse is in global coordinates; the picker works in the window's. */
-    static Point sLastMouse = {-1, -1};
-
-    GetMouse(&mouse);
-    if (!sHoverValid && mouse.h == sLastMouse.h && mouse.v == sLastMouse.v) {
-        /* Nothing moved and we already know the answer (including "nothing
-         * there"): the pick searches every column near the pointer and runs on
-         * every idle tick, so skipping it matters more than it looks. */
-        return;
-    }
-    sLastMouse = mouse;
+    /* GetMouse reports the pointer in the *current port's* coordinates, not
+     * globally. Reading it with the window port current therefore already gives
+     * window coordinates -- and the GlobalToLocal that used to follow subtracted
+     * the window origin a second time, which is why the hover ring sat a whole
+     * window width away from the pointer. */
     {
         GrafPtr saved;
 
         GetPort(&saved);
         SetPort(sWindow);
-        GlobalToLocal(&mouse);
+        GetMouse(&mouse);
         SetPort(saved);
     }
-    valid = PickSurfaceAt(mouse, &x, &y, &z);
 
-    if (valid == sHoverValid && valid && x == sHoverX && y == sHoverY && z == sHoverZ) {
-        return;
+    if (Hover_Update(mouse, &sDisplayRect, sCamX, sCamY, &dirty)) {
+        MarkDirty(&dirty);
+        /* The readout follows the pointer; it is drawn outside the update
+         * region, from the idle loop. */
+        sStripDirty = true;
     }
-    if (!valid && !sHoverValid) {
-        return;
-    }
-
-    if (sHoverValid) {
-        Rect old;
-
-        SelectionBoxRect(sHoverX, sHoverY, sHoverZ, &old);
-        MarkDirty(&old);
-    }
-
-    sHoverValid = valid;
-    sHoverX = x;
-    sHoverY = y;
-    sHoverZ = z;
-
-    if (valid) {
-        Rect now;
-
-        SelectionBoxRect(sHoverX, sHoverY, sHoverZ, &now);
-        MarkDirty(&now);
-    }
-
-    /* The readout follows the pointer, but it is repainted outside the update
-     * region: see sStripDirty. */
-    sStripDirty = true;
 }
 
 /* True when any column under the rect holds water. Water sprites are drawn with
@@ -1001,65 +957,9 @@ static Boolean RectHasWater(const Rect *r)
     return false;
 }
 
-/* The selection box: Minecraft's black wireframe on the block you are looking
- * at. Drawn after the world so it is never covered. Three edges matter on an
- * isometric cube -- the three vertical ones at the silhouette corners -- plus
- * the top diamond; the hidden edges are not drawn, exactly as in the game. */
-static void DrawSelectionBox(short x, short y, short z)
-{
-    short sx, sy;
-    short i;
-    Rect run;
 
-    Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
-    sx = (short)(sx + sDisplayRect.left);
-    sy = (short)(sy + sDisplayRect.top);
-    Sprite_BoxDraws++;
 
-    /* Pixels, not QuickDraw strokes: a stroke is clipped to the paint's update
-     * region, so a repaint that did not include the box left the old one on
-     * screen and the wireframe looked like it was the wrong tile. Two pixels per
-     * row along a 2:1 slope is all the geometry needs.
-     *
-     * The pixel frame is the caller's: opening another one here unlocked the
-     * screen in the middle of the paint and the fills went nowhere. */
 
-    /* Upper half of the diamond, then the lower. */
-    for (i = 0; i <= kTileH / 2; i++) {
-        short rowY = (short)(sy - kTileH / 2 + i);
-
-        SetRect(&run, (short)(sx - i * 2), rowY, (short)(sx - i * 2 + 2),
-                (short)(rowY + 1));
-        Sprite_FillRect(&run, 0x000000UL);
-        SetRect(&run, (short)(sx + i * 2 - 1), rowY, (short)(sx + i * 2 + 1),
-                (short)(rowY + 1));
-        Sprite_FillRect(&run, 0x000000UL);
-    }
-    for (i = 0; i <= kTileH / 2; i++) {
-        short rowY = (short)(sy + i);
-
-        SetRect(&run, (short)(sx - kTileW / 2 + i * 2), rowY,
-                (short)(sx - kTileW / 2 + i * 2 + 2), (short)(rowY + 1));
-        Sprite_FillRect(&run, 0x000000UL);
-        SetRect(&run, (short)(sx + kTileW / 2 - i * 2 - 1), rowY,
-                (short)(sx + kTileW / 2 - i * 2 + 1), (short)(rowY + 1));
-        Sprite_FillRect(&run, 0x000000UL);
-    }
-
-    /* The three vertical edges at the silhouette corners. */
-    SetRect(&run, (short)(sx - 1), (short)(sy + kTileH / 2),
-            (short)(sx + 1), (short)(sy + kTileH / 2 + kTileH));
-    Sprite_FillRect(&run, 0x000000UL);
-    SetRect(&run, (short)(sx - kTileW / 2), (short)(sy),
-            (short)(sx - kTileW / 2 + 1), (short)(sy + kTileH));
-    Sprite_FillRect(&run, 0x000000UL);
-    SetRect(&run, (short)(sx + kTileW / 2 - 1), (short)(sy),
-            (short)(sx + kTileW / 2), (short)(sy + kTileH));
-    Sprite_FillRect(&run, 0x000000UL);
-
-    Sprite_SetView(&sDisplayRect);
-    Sprite_EndFrame();
-}
 
 /* Draw one block: top diamond plus its two visible side faces, all centred on
  * Iso_Project(x, y, z, ...) and clipped nowhere (the update region clips). */
@@ -1512,6 +1412,7 @@ static void GameWindow_Render(void)
         Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
                     (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
                     sWalkPhase, (Boolean)!sPlayer.onGround);
+        Hover_Draw(&sDisplayRect, sCamX, sCamY);
         HUD_DrawCrosshair();
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
@@ -1522,6 +1423,8 @@ static void GameWindow_Render(void)
          * survive, but QuickDraw's clip can suppress these, so they are drawn
          * whenever the play area is anywhere in the clip. */
         Sprite_BeginFrame();
+        Sprite_SetView(&sDisplayRect);
+        Hover_Draw(&sDisplayRect, sCamX, sCamY);
         HUD_DrawCrosshair();
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
@@ -1594,9 +1497,18 @@ static void GameWindow_Render(void)
         Sprite_BeginFrame();
         if (wantsStrip) {
             Sprite_SetView(&sTitleStripRect);
-            HUD_DrawStrip(HoveredBlock(), (BlockID)(sBlockType + 1),
-                          sHoverValid ? sHoverX : (short)(sPlayer.x >> 16),
-                          sHoverValid ? sHoverY : (short)(sPlayer.y >> 16));
+            {
+                short hoverX = 0;
+                short hoverY = 0;
+
+                Hover_Tile(&hoverX, &hoverY, NULL);
+                if (!Hover_Valid()) {
+                    hoverX = (short)(sPlayer.x >> 16);
+                    hoverY = (short)(sPlayer.y >> 16);
+                }
+                HUD_DrawStrip(Hover_Block(), (BlockID)(sBlockType + 1),
+                              hoverX, hoverY);
+            }
         }
         if (wantsHotbar) {
             Sprite_SetView(&sBlockSelectorRect);
@@ -1637,34 +1549,9 @@ static void GameWindow_Update(void)
     GameWindow_Render();
 
     EndUpdate(sWindow);
-
-    /* After the update pass: no update region, so the wireframe lands on the
-     * block it belongs to instead of being clipped away. */
-    GameWindow_DrawOverlay();
 }
 
-/* Everything drawn on top of the finished frame, with no update region in the
- * way: the selection box is QuickDraw, and a stroke made inside BeginUpdate is
- * clipped to the damage, which is what left the old box on screen and made the
- * highlight look like it belonged to another tile. */
-static void GameWindow_DrawOverlay(void)
-{
-    GrafPtr saved;
 
-    if (!sInitialized || sWindow == NULL || !sIsVisible || !sHoverValid) {
-        return;
-    }
-
-    GetPort(&saved);
-    SetPort(sWindow);
-    SetClip(NULL);
-    PenNormal();
-    PenSize(1, 1);
-    ForeColor(blackColor);
-    PenPat(&qd.black);
-    DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
-    SetPort(saved);
-}
 
 void GameWindow_HandleEvent(EventRecord *event)
 {
@@ -2111,14 +1998,14 @@ void GameWindow_Idle(void)
             else {
                 Rect crackRect;
 
-                SelectionBoxRect(sBreakX, sBreakY, sBreakZ, &crackRect);
+                TileBox(sBreakX, sBreakY, sBreakZ, &crackRect);
                 MarkDirty(&crackRect);
             }
         }
         else {
             Rect crackRect;
 
-            SelectionBoxRect(sBreakX, sBreakY, sBreakZ, &crackRect);
+            TileBox(sBreakX, sBreakY, sBreakZ, &crackRect);
             MarkDirty(&crackRect);
             sBreaking = false;
             sBreakTicks = 0;
@@ -2169,9 +2056,17 @@ void GameWindow_Idle(void)
         SetPort(sWindow);
         Sprite_BeginFrame();
         Sprite_SetView(&sTitleStripRect);
-        HUD_DrawStrip(HoveredBlock(), (BlockID)(sBlockType + 1),
-                      sHoverValid ? sHoverX : (short)(sPlayer.x >> 16),
-                      sHoverValid ? sHoverY : (short)(sPlayer.y >> 16));
+        {
+            short hoverX = 0;
+            short hoverY = 0;
+
+            Hover_Tile(&hoverX, &hoverY, NULL);
+            if (!Hover_Valid()) {
+                hoverX = (short)(sPlayer.x >> 16);
+                hoverY = (short)(sPlayer.y >> 16);
+            }
+            HUD_DrawStrip(Hover_Block(), (BlockID)(sBlockType + 1), hoverX, hoverY);
+        }
         Sprite_SetView(&sDisplayRect);
         Sprite_EndFrame();
         SetPort(saved);

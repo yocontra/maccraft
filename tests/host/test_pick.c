@@ -176,6 +176,54 @@ static void TestDeterminism(void)
     CHECK(x1 == x2 && y1 == y2 && z1 == z2);
 }
 
+/*
+ * Round trip: whatever Pick_Tile returns for a point must be a surface whose
+ * top diamond actually contains that point. The hover wireframe is drawn from
+ * the returned tile, so if this fails the ring lands somewhere else.
+ */
+static void TestRoundTrip()
+{
+    static const short cams[3][2] = {{0, 0}, {-160, -80}, {160, 80}};
+    short c, sx, sy;
+
+    ClearWorld();
+    BuildColumn(24, 24, 3);
+    BuildColumn(30, 30, 1);
+    BuildColumn(18, 28, 2);
+
+    for (c = 0; c < 3; c++) {
+        short camX = cams[c][0];
+        short camY = cams[c][1];
+
+        for (sx = 200; sx <= 400; sx += 7) {
+            for (sy = 120; sy <= 320; sy += 5) {
+                short x, y, z, px, py;
+                long dx, dy;
+
+                if (!Pick_Tile(sx, sy, camX, camY, &x, &y, &z)) {
+                    continue;
+                }
+                Iso_Project(x, y, z, camX, camY, &px, &py);
+                dx = (long)sx - px;
+                dy = (long)sy - py;
+                if (dx < 0) dx = -dx;
+                if (dy < 0) dy = -dy;
+
+                /* Inside the diamond, one pixel of slack for the edge test. */
+                if (dx * (kTileH / 2) + dy * (kTileW / 2) >
+                    (long)(kTileW / 2) * (kTileH / 2) + (kTileW / 2)) {
+                    fprintf(stderr,
+                            "pick(%d,%d) cam(%d,%d) -> (%d,%d,%d) projects to "
+                            "(%d,%d): point is outside its diamond\n",
+                            sx, sy, camX, camY, x, y, z, px, py);
+                    sFailures++;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 int main(void)
 {
     TestFlatColumns();
@@ -184,6 +232,7 @@ int main(void)
     TestRejectsEmptySpace();
     TestTallColumnDoesNotShadowNearerColumn();
     TestDeterminism();
+    TestRoundTrip();
 
     if (sFailures == 0)
         printf("all pick tests passed\n");

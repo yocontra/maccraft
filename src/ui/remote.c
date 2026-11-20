@@ -66,7 +66,6 @@ static short ShareVolume(void)
 /* Write a stats line into the receipt: paint ticks, paint count, physics steps. */
 /* Defined by the game window: total pixels the world pass has covered. */
 extern long Sprite_PaintedPixels;
-extern long Sprite_BoxDraws;
 extern long Sprite_Phase[3];
 
 void Remote_ReportStats(long paintTicks, long paints, long steps)
@@ -76,7 +75,7 @@ void Remote_ReportStats(long paintTicks, long paints, long steps)
      * Every field is decimal, negative allowed. */
     char line[96];
     short i = 0;
-    long values[8];
+    long values[7];
     short v;
 
     values[0] = paintTicks;
@@ -86,9 +85,8 @@ void Remote_ReportStats(long paintTicks, long paints, long steps)
     values[4] = Sprite_Phase[0];
     values[5] = Sprite_Phase[1];
     values[6] = Sprite_Phase[2];
-    values[7] = Sprite_BoxDraws;
 
-    for (v = 0; v < 8; v++) {
+    for (v = 0; v < 7; v++) {
         char digits[12];
         short n = 0;
         long value = values[v];

@@ -32,6 +32,7 @@ set(SRC_C
     src/ui/about_window.c
     src/ui/window_manager.c
     src/ui/utils.c
+    src/ui/hover.c
     src/ui/hud.c
     src/ui/remote.c
     src/ui/world_view.c
@@ -64,6 +65,7 @@ set(HEADER_FILES
     src/ui/about_window.h
     src/ui/window_manager.h
     src/ui/utils.h
+    src/ui/hover.h
     src/ui/hud.h
     src/ui/remote.h
     src/ui/world_view.h
