@@ -671,20 +671,14 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
         }
         line = (unsigned long *)rowBase + x0;
         s += (x0 - originX) - first;
-        /* Four pixels per loop test: the copy itself is one move per pixel, so
-         * the compare and branch are what the unroll buys back on a 68000. */
-        while ((short)(x1 - x0) >= 4) {
-            line[0] = s[0];
-            line[1] = s[1];
-            line[2] = s[2];
-            line[3] = s[3];
-            line += 4;
-            s += 4;
-            x0 = (short)(x0 + 4);
-        }
-        while (x0 < x1) {
-            *line++ = *s++;
-            x0 = (short)(x0 + 1);
-        }
+        /* The run is contiguous and the source is never the destination, so
+         * the ROM's own move can take the row.  Measured on the guest (field 6
+         * of the stats receipt, full launch frame, 484,194 painted pixels):
+         * 40-41 ticks against 46-48 for a four-pixel unrolled store loop, so
+         * the trap overhead is repaid at these run lengths (~64-128 bytes).
+         * The water path above keeps its per-pixel loop: its holes must stay
+         * clear, and a block move would paint them. */
+        BlockMoveData((Ptr)s, (Ptr)line,
+                      (unsigned long)(x1 - x0) * sizeof(unsigned long));
     }
 }
