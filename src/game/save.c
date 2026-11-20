@@ -180,20 +180,35 @@ OSErr Save_Read(void)
         return (OSErr)-1; /* wrong magic, version or size: refuse the file */
     }
 
-    for (x = 0; x < kWorldX; x++) {
-        for (y = 0; y < kWorldY; y++) {
-            for (z = 0; z < kWorldZ; z++) {
-                if (offset == 0) {
-                    count = (long)sizeof(block);
-                    err = FSRead(refNum, &count, block);
-                    if (err != noErr || count != (long)sizeof(block)) {
-                        FSClose(refNum);
-                        return (err != noErr) ? err : (OSErr)-2;
-                    }
-                }
-                World_Set(x, y, z, (BlockID)block[offset++]);
-                if (offset > (long)sizeof(block) - 1) {
-                    offset = 0;
+    /* Read the whole payload before touching the world. Applying it as it
+     * arrived meant a file truncated half way left the live world partly
+     * replaced with zeroes even though the call reported an error -- and the
+     * caller's "is there an island" sanity count still passed. */
+    {
+        static unsigned char staging[kWorldX * kWorldY * kWorldZ];
+        long got = 0;
+
+        while (got < (long)sizeof(staging)) {
+            count = (long)sizeof(staging) - got;
+            err = FSRead(refNum, &count, staging + got);
+            if (err != noErr && err != eofErr) {
+                FSClose(refNum);
+                return err;
+            }
+            if (count <= 0) {
+                break;
+            }
+            got += count;
+        }
+        if (got != (long)sizeof(staging)) {
+            FSClose(refNum);
+            return (OSErr)-2;   /* short file: leave the world alone */
+        }
+
+        for (x = 0; x < kWorldX; x++) {
+            for (y = 0; y < kWorldY; y++) {
+                for (z = 0; z < kWorldZ; z++) {
+                    World_Set(x, y, z, (BlockID)staging[offset++]);
                 }
             }
         }

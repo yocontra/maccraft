@@ -564,7 +564,12 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
         return;
     }
 
-    /* Only the rows inside the play area need visiting at all. */
+    /* Only the rows inside the play area need visiting at all. The screen is a
+     * second bound, not an implied one: the window can be dragged so its body
+     * hangs below the screen, and the view rect moves with it, so clamping to
+     * the view alone let the row loop write past the end of the device PixMap --
+     * up to 23 rows of a side face. Sprite_FillRect always clamped; this did
+     * not. */
     firstRow = (short)(viewTop - originY);
     if (firstRow < 0) {
         firstRow = 0;
@@ -572,6 +577,9 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
     lastRow = (short)(viewBottom - originY);
     if (lastRow > height) {
         lastRow = height;
+    }
+    if ((short)(originY + lastRow) > sScreenHeight) {
+        lastRow = (short)(sScreenHeight - originY);
     }
     if (firstRow >= lastRow) {
         return;

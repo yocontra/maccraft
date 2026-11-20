@@ -128,6 +128,7 @@ static void MarkDirty(const Rect *r);
 static void FlushDirty(void);
 static void GameWindow_Update(void);
 static void GameWindow_Render(void);
+static void SpawnPlayerOnClearGround(void);
 
 /* Filled polygons take their colour from the *pen pattern*, so a plain
  * 1-bit pattern can only ever be a shade of grey: PaintPoly with qd.white
@@ -233,26 +234,8 @@ void GameWindow_Initialize(void)
         Scene_BuildIsland();
     }
 
-    /* Spawn *after* the world exists, and on ground that is actually clear. The
-     * island's centre is the hut, whose roof is the topmost block the world can
-     * hold (z = 7): spawning there put the player at z = 8, outside the world, so
-     * it fell for ever. Pick the nearest clear column to the centre instead. */
-    {
-        short sx = 20;
-        short sy = 30;
-        short keep = 0;
-
-        /* Spiral out from the chosen spot until a column has ground and no
-         * structure above the plateau; 8 is comfortably clear of the hut. */
-        for (keep = 0; keep < 16; keep++) {
-            short tz = World_TopZ((short)(sx + keep), sy);
-
-            if (tz >= 0 && tz < 7) {
-                sx = (short)(sx + keep);
-                break;
-            }
-        }
-        Player_Spawn(&sPlayer, sx, sy, (short)(World_TopZ(sx, sy) + 1));
+    /* Spawn after the world exists, on ground that is actually clear. */
+    SpawnPlayerOnClearGround();
     /* Centre before the first paint: the camera starts at zero, so the first
      * frame would otherwise draw the island off-screen and the partial repaints
      * that follow never cover the world area again. */
@@ -265,7 +248,6 @@ void GameWindow_Initialize(void)
                         (px - py) * (kTileW / 2));
         sCamY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2 -
                         ((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
-    }
     }
     Sfx_Init();
 
@@ -637,6 +619,7 @@ static void FinishBreak(void)
     }
     if (World_Set(sBreakX, sBreakY, sBreakZ, 0)) {
         Sfx_Play(kSfxBreak);
+        Hover_Reset();
     }
     sBreaking = false;
     sBreakTicks = 0;
@@ -993,6 +976,48 @@ static void InvalidateColumn(short x, short y, short z)
     MarkDirty(&r);
 }
 
+/* True when a block at this cell would be inside the player's box. Placing into
+ * your own cell used to embed the player in geometry: every sub-step then hit the
+ * block and the collision snap teleported it sideways by most of a block. */
+static Boolean BlockFillsPlayer(short x, short y, short z)
+{
+    long loX = sPlayer.x - kPlayerHalfWidth;
+    long hiX = sPlayer.x + kPlayerHalfWidth;
+    long loY = sPlayer.y - kPlayerHalfWidth;
+    long hiY = sPlayer.y + kPlayerHalfWidth;
+    long loZ = sPlayer.z;
+    long hiZ = sPlayer.z + kPlayerHeight;
+
+    return (Boolean)((long)x << 16 < hiX && (long)(x + 1) << 16 > loX &&
+                     (long)y << 16 < hiY && (long)(y + 1) << 16 > loY &&
+                     (long)z << 16 < hiZ && (long)(z + 1) << 16 > loZ);
+}
+
+/* Put the player on the nearest clear column to the centre.
+ *
+ * The island's centre is the hut, whose roof is the topmost block the world can
+ * hold (z = 7): spawning there put the player at z = 8, outside the world, so it
+ * fell for ever. Both the initial spawn and Reset World go through here, so the
+ * two cannot disagree again. */
+static void SpawnPlayerOnClearGround(void)
+{
+    short sx = 20;
+    short sy = 30;
+    short keep;
+
+    /* Walk outwards from the chosen spot until a column has ground and no
+     * structure above the plateau; 8 is comfortably clear of the hut. */
+    for (keep = 0; keep < 16; keep++) {
+        short tz = World_TopZ((short)(sx + keep), sy);
+
+        if (tz >= 0 && tz < 7) {
+            sx = (short)(sx + keep);
+            break;
+        }
+    }
+    Player_Spawn(&sPlayer, sx, sy, (short)(World_TopZ(sx, sy) + 1));
+}
+
 /* Handle mouse clicks in the content area of the game window. */
 static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
 {
@@ -1050,8 +1075,10 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                  placeY >= 0 && placeY < kWorldY &&
                  placeZ >= 0 && placeZ < kWorldZ &&
                  World_Get(placeX, placeY, placeZ) == 0 &&
+                 !BlockFillsPlayer(placeX, placeY, placeZ) &&
                  World_Set(placeX, placeY, placeZ, (BlockID)(sBlockType + 1))) {
             Sfx_Play(kSfxPlace);
+            Hover_Reset();
             sSwingUntil = (unsigned long)TickCount() + 8;
             InvalidateColumn(placeX, placeY, placeZ);
         }
@@ -1308,32 +1335,31 @@ static void GameWindow_Render(void)
             Sprite_ScrollRect(&sDisplayRect, dx, dy);
             Sprite_EndFrame();
 
-            /* The exposed strip is a band on the side the content came from, plus
-             * the orthogonal band at the top or bottom: one rectangle covering
-             * both is simpler and still small. */
-            exposed = sDisplayRect;
-            if (dx > 0) {
-                exposed.right = (short)(exposed.left + dx + kTileW);
+            /* The exposed area is the band the shift uncovered. With one axis
+             * moving it is a single strip; with both it is an L, and one
+             * rectangle cannot describe it -- the old code repainted only the
+             * corner, which left a band of the previous frame on screen. The
+             * camera derives both axes from grid coordinates, so most pans are
+             * diagonal: those take the whole play area and are correct. */
+            if (dx != 0 && dy != 0) {
+                sRenderRect = sDisplayRect;
             }
-            else if (dx < 0) {
-                exposed.left = (short)(exposed.right + dx - kTileW);
+            else {
+                exposed = sDisplayRect;
+                if (dx > 0) {
+                    exposed.right = (short)(exposed.left + dx + kTileW);
+                }
+                else if (dx < 0) {
+                    exposed.left = (short)(exposed.right + dx - kTileW);
+                }
+                else if (dy > 0) {
+                    exposed.bottom = (short)(sDisplayRect.top + dy + kTileH * 2);
+                }
+                else {
+                    exposed.top = (short)(sDisplayRect.bottom + dy - kTileH * 2);
+                }
+                sRenderRect = exposed;
             }
-            if (dy > 0) {
-                exposed.top = (short)(exposed.top - 0);
-                exposed.bottom = (short)(sDisplayRect.top + dy + kTileH * 2);
-            }
-            else if (dy < 0) {
-                exposed.bottom = (short)(sDisplayRect.bottom + dy + kTileH * 2);
-            }
-            if (dx == 0) {
-                exposed.left = sDisplayRect.left;
-                exposed.right = sDisplayRect.right;
-            }
-            if (dy == 0) {
-                exposed.top = sDisplayRect.top;
-                exposed.bottom = sDisplayRect.bottom;
-            }
-            sRenderRect = exposed;
         }
     }
 
@@ -1752,7 +1778,8 @@ void GameWindow_ResetWorld(void)
 {
     Save_Delete();
     Scene_BuildIsland();
-    Player_Spawn(&sPlayer, 24, 24, (short)(World_TopZ(24, 24) + 1));
+    SpawnPlayerOnClearGround();
+    Hover_Reset();
     CentreOnPlayer();
     MarkDirty(&sDisplayRect);
     FlushDirty();

@@ -243,7 +243,7 @@ Boolean Remote_Launch(const char *name)
         static const char prefix[] = "MacCraft run ";
         short n = 0;
 
-        destName[0] = 15;
+        destName[0] = 14;   /* "MacCraft run " is 13 chars plus the slot digit */
         while (prefix[n] != '\0') {
             destName[n + 1] = (unsigned char)prefix[n];
             n++;
@@ -278,15 +278,21 @@ Boolean Remote_Launch(const char *name)
         if (count > 0) {
             long wrote = count;
 
-            if (FSWrite(dstRef, &wrote, sFork) != noErr) {
+            if (FSWrite(dstRef, &wrote, sFork) != noErr || wrote != count) {
                 FSClose(dstRef);
                 FSClose(srcRef);
                 Remote_SetResult("launch: data write failed");
                 return false;
             }
         }
-        if (err != noErr || count == 0) {
+        if (err == eofErr || count == 0) {
             break;
+        }
+        if (err != noErr) {
+            FSClose(dstRef);
+            FSClose(srcRef);
+            Remote_SetResult("launch: data read failed");
+            return false;
         }
     }
     FSClose(dstRef);
@@ -309,15 +315,21 @@ Boolean Remote_Launch(const char *name)
         if (count > 0) {
             long wrote = count;
 
-            if (FSWrite(dstRef, &wrote, sFork) != noErr) {
+            if (FSWrite(dstRef, &wrote, sFork) != noErr || wrote != count) {
                 FSClose(dstRef);
                 FSClose(srcRef);
                 Remote_SetResult("launch: resource write failed");
                 return false;
             }
         }
-        if (err != noErr || count == 0) {
+        if (err == eofErr || count == 0) {
             break;
+        }
+        if (err != noErr) {
+            FSClose(dstRef);
+            FSClose(srcRef);
+            Remote_SetResult("launch: resource read failed");
+            return false;
         }
     }
     FSClose(dstRef);

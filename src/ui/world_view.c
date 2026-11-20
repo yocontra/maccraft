@@ -293,16 +293,23 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
                   sx - kTileW / 2, sy, id, kBlockFaceTop, topShade, topVariation);
     }
 
-    /* Left face. */
+    /* Left face. A cube face is 16 rows deep, the same as the baked sprite and
+     * what pick.c's SideContains assumes; these quads were half height, so on a
+     * non-32-bit display every block drew as a squat slab and a click up to 15 px
+     * below a side's top edge resolved to a face nothing had drawn. */
     if (showLeft) {
-        PaintQuad(v, sx - kTileW / 2, sy, sx, sy + kTileH / 2, sx, sy + kTileH,
-                  sx - kTileW / 2, sy + kTileH / 2, id, kBlockFaceLeft, leftShade, topVariation);
+        PaintQuad(v, sx - kTileW / 2, sy, sx, sy + kTileH / 2,
+                  sx, sy + kTileH + kTileH / 2,
+                  sx - kTileW / 2, sy + kTileH,
+                  id, kBlockFaceLeft, leftShade, topVariation);
     }
 
     /* Right face. */
     if (showRight) {
-        PaintQuad(v, sx, sy + kTileH / 2, sx + kTileW / 2, sy, sx + kTileW / 2, sy + kTileH / 2,
-                  sx, sy + kTileH, id, kBlockFaceRight, rightShade, topVariation);
+        PaintQuad(v, sx, sy + kTileH / 2, sx + kTileW / 2, sy,
+                  sx + kTileW / 2, sy + kTileH,
+                  sx, sy + kTileH + kTileH / 2,
+                  id, kBlockFaceRight, rightShade, topVariation);
     }
 
     /* No outline. A block is separated from its neighbours by the shade step

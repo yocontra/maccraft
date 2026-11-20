@@ -107,27 +107,34 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
         return false;
     }
 
-    if (sValid) {
-        BoxFor(sTileX, sTileY, sLevel, &oldBox);
-    }
-    sValid = valid;
-    sTileX = x;
-    sTileY = y;
-    sLevel = surface;
+    /* Capture whether a box existed before the state is overwritten: the union
+     * below must never read an uninitialised rectangle, which is what happened
+     * the first time the pointer found a tile after being over nothing. */
+    {
+        Boolean wasValid = sValid;
 
-    if (dirty == NULL) {
-        return true;
-    }
-    if (!valid) {
-        *dirty = oldBox;
-        return true;
-    }
-    BoxFor(sTileX, sTileY, sLevel, &newBox);
-    if (sValid && oldBox.right > oldBox.left && oldBox.bottom > oldBox.top) {
-        UnionRect(&newBox, &oldBox, dirty);
-    }
-    else {
-        *dirty = newBox;
+        if (wasValid) {
+            BoxFor(sTileX, sTileY, sLevel, &oldBox);
+        }
+        sValid = valid;
+        sTileX = x;
+        sTileY = y;
+        sLevel = surface;
+
+        if (dirty == NULL) {
+            return true;
+        }
+        if (!valid) {
+            *dirty = oldBox;
+            return true;
+        }
+        BoxFor(sTileX, sTileY, sLevel, &newBox);
+        if (wasValid) {
+            UnionRect(&newBox, &oldBox, dirty);
+        }
+        else {
+            *dirty = newBox;
+        }
     }
     return true;
 }
