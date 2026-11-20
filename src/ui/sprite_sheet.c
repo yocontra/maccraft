@@ -672,10 +672,16 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
         line = (unsigned long *)rowBase + x0;
         s += (x0 - originX) - first;
         /* The run is contiguous and the source is never the destination, so
-         * the ROM's own move can take the row.  Measured on the guest (field 6
-         * of the stats receipt, full launch frame, 484,194 painted pixels):
-         * 40-41 ticks against 46-48 for a four-pixel unrolled store loop, so
-         * the trap overhead is repaid at these run lengths (~64-128 bytes).
+         * the ROM's own move can take the row.  Measured on the guest, three
+         * alternating pairs in one session (field 6 of the stats receipt, full
+         * launch frame, 484,194 painted pixels): 40, 41, 41 here against 47, 47,
+         * 48 for the four-pixel unrolled store loop -- so the trap overhead is
+         * repaid at these run lengths (~64-128 bytes).
+         *
+         * Compare builds in pairs, in one session: the same binary reads 39-40
+         * in one session and 47-48 in another, so only the paired difference is
+         * trustworthy.
+         *
          * The water path above keeps its per-pixel loop: its holes must stay
          * clear, and a block move would paint them. */
         BlockMoveData((Ptr)s, (Ptr)line,
