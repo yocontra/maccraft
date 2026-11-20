@@ -4,23 +4,13 @@
 #include <Events.h>
 #include <Windows.h>
 
-/* Window types */
-enum { kWindowTypeSplash = 0, kWindowTypeGame = 1 };
+/* Window types. kWindowTypeCount is the sentinel every entry point checks
+ * against, instead of a bare literal 2. */
+enum { kWindowTypeSplash = 0, kWindowTypeGame = 1, kWindowTypeCount = 2 };
 typedef unsigned short WindowType;
 
-/* Common window module interface */
-typedef struct {
-    WindowRef window;
-    Boolean initialized;
-    Boolean visible;
-    Boolean (*initialize)(void);
-    void (*dispose)(void);
-    Boolean (*show)(Boolean);
-    void (*handleEvent)(EventRecord *);
-    void (*update)(void);
-    WindowRef (*getWindowRef)(void);
-    Boolean (*isVisible)(void);
-} WindowModule;
+/* The module table itself is private to window_manager.c: callers only ever
+ * name a WindowType, so the vtable does not belong in the public header. */
 
 /* Initialize the window manager and the initial window.
  * Returns false when the initial window could not be created. */

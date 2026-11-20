@@ -8,6 +8,7 @@
 #include <string.h>
 #include <Files.h>
 
+#include "diagnostics.h"
 #include "remote.h"
 
 /* What the caller decided, so the receipt can say whether the command was
@@ -65,8 +66,6 @@ static short ShareVolume(void)
  * written before it would describe the previous command. */
 /* Write a stats line into the receipt: paint ticks, paint count, physics steps. */
 /* Defined by the game window: total pixels the world pass has covered. */
-extern long Sprite_PaintedPixels;
-extern long Sprite_Phase[3];
 
 void Remote_ReportStats(long paintTicks, long paints, long steps)
 {

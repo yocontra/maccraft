@@ -61,6 +61,7 @@ set(HEADER_FILES
     src/ui/game_window.h
     src/ui/about_window.h
     src/ui/window_manager.h
+    src/ui/diagnostics.h
     src/ui/hover.h
     src/ui/hud.h
     src/ui/remote.h

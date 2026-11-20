@@ -17,7 +17,21 @@
  */
 
 /* Window modules registration */
-static WindowModule gWindowModules[2];
+/* Common window module interface. Private: nothing outside this file should be
+ * able to see or invent a module. */
+typedef struct {
+    WindowRef window;
+    Boolean initialized;
+    Boolean visible;
+    Boolean (*initialize)(void);
+    void (*dispose)(void);
+    Boolean (*show)(Boolean);
+    void (*handleEvent)(EventRecord *);
+    WindowRef (*getWindowRef)(void);
+    Boolean (*isVisible)(void);
+} WindowModule;
+
+static WindowModule gWindowModules[kWindowTypeCount];
 
 /* Current active window tracking */
 static WindowType gForegroundWindowType = kWindowTypeSplash;
@@ -89,7 +103,7 @@ void WindowManager_Dispose(void)
     int i;
 
     /* Dispose windows that were initialized */
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < kWindowTypeCount; i++) {
         if (gWindowModules[i].initialized) {
             gWindowModules[i].dispose();
             gWindowModules[i].initialized = false;
@@ -101,7 +115,7 @@ void WindowManager_Dispose(void)
 /* Open a specific type of window */
 void WindowManager_OpenWindow(WindowType windowType)
 {
-    if (windowType >= 2) {
+    if (windowType >= kWindowTypeCount) {
         return;
     }
 
@@ -125,7 +139,7 @@ void WindowManager_OpenWindow(WindowType windowType)
 /* Close a specific type of window */
 void WindowManager_CloseWindow(WindowType windowType)
 {
-    if (windowType >= 2) {
+    if (windowType >= kWindowTypeCount) {
         return;
     }
 
@@ -293,7 +307,7 @@ static Boolean RouteUpdateEvent(EventRecord *event)
         window = (WindowRef)event->message;
 
         /* Find which window needs updating */
-        for (i = 0; i < 2; i++) {
+        for (i = 0; i < kWindowTypeCount; i++) {
             if (window == gWindowModules[i].getWindowRef() && gWindowModules[i].isVisible()) {
                 gWindowModules[i].handleEvent(event);
                 return true;
@@ -326,7 +340,7 @@ void WindowManager_HandleEvent(EventRecord *event)
     /* Route mouse events to the window that was actually clicked */
     if (event->what == mouseDown) {
         FindWindow(event->where, &clicked);
-        for (i = 0; i < 2; i++) {
+        for (i = 0; i < kWindowTypeCount; i++) {
             if (clicked == gWindowModules[i].getWindowRef() &&
                 gWindowModules[i].initialized && gWindowModules[i].visible) {
                 gWindowModules[i].handleEvent(event);

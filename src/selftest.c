@@ -19,6 +19,7 @@
 #include "constants.h"
 #include "game/iso.h"
 #include "game/world.h"
+#include "ui/diagnostics.h"
 #include "selftest.h"
 #include "sound/sfx.h"
 #include "game/save.h"
@@ -206,8 +207,7 @@ void SelfTest_Run(void)
 
     LogLine("game_visible=", NULL, (long)GameWindow_IsVisible(), true);
     {
-        extern long Sprite_Work[6];
-
+        
         LogLine("hover_ticks=", NULL, Sprite_Work[0], true);
         LogLine("hover_calls=", NULL, Sprite_Work[1], true);
         LogLine("paint_ticks=", NULL, Sprite_Work[2], true);
@@ -285,8 +285,7 @@ void SelfTest_Run(void)
         short blocks = 0;
         unsigned long ticks = GameWindow_TimeRender(10, &blocks);
 
-        extern long Sprite_Timing[4];
-
+        
         LogLine("render_ticks_10=", NULL, (long)ticks, true);
         LogLine("sky_ticks_10=", NULL, Sprite_Timing[0], true);
         LogLine("world_ticks_10=", NULL, Sprite_Timing[1], true);

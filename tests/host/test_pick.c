@@ -224,6 +224,39 @@ static void TestRoundTrip()
     }
 }
 
+/*
+ * The side faces are what let a click build against a wall instead of piling on
+ * top. Nothing exercised them: Pick_Tile only reports the column, so a wrong
+ * face or a wrong neighbour shipped silently and looked like "clicking a wall
+ * does nothing".
+ */
+static void TestFaces(void)
+{
+    short sx, sy, x, y, z, face;
+
+    ClearWorld();
+    BuildColumn(20, 20, 3);
+
+    Iso_Project(20, 20, 2, 0, 0, &sx, &sy);
+
+    /* Centre of the top face. */
+    CHECK(Pick_TileFace(sx, sy - 2, 0, 0, &x, &y, &z, &face));
+    CHECK(face == kPickFaceTop);
+    CHECK(x == 20 && y == 20);
+
+    /* Eight pixels right and twelve down is inside the right face, which points
+     * at the column at (x+1, y). */
+    CHECK(Pick_TileFace((short)(sx + 8), (short)(sy + 12), 0, 0, &x, &y, &z, &face));
+    CHECK(face == kPickFaceRight);
+    CHECK(x == 20 && y == 20);
+    CHECK(z == 3);
+
+    /* The mirror on the left, pointing at (x, y+1). */
+    CHECK(Pick_TileFace((short)(sx - 8), (short)(sy + 12), 0, 0, &x, &y, &z, &face));
+    CHECK(face == kPickFaceLeft);
+    CHECK(x == 20 && y == 20);
+}
+
 int main(void)
 {
     TestFlatColumns();
@@ -233,6 +266,7 @@ int main(void)
     TestTallColumnDoesNotShadowNearerColumn();
     TestDeterminism();
     TestRoundTrip();
+    TestFaces();
 
     if (sFailures == 0)
         printf("all pick tests passed\n");
