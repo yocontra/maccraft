@@ -63,6 +63,11 @@ static Player sPlayer;
 static short sIntentX = 0;
 static short sIntentY = 0;
 static Boolean sJumpHeld = false;
+/* Movement intent stays alive until this tick, refreshed by every repeat, so a
+ * held key walks instead of taking one step per repeat. */
+static unsigned long sIntentUntil = 0;
+
+#define kIntentHoldTicks 12
 static unsigned long sLastPhysicsTick = 0;
 static Boolean sWorldDirty = false;
 
@@ -72,6 +77,9 @@ long Sprite_Work[6];
  * divided by Sprite_Work[3], and it is what tells a small hover box from a full
  * frame without guessing. */
 long Sprite_PaintedPixels;
+/* Times the selection box has been drawn: tells "never called" from "drawn but
+ * invisible". */
+long Sprite_BoxDraws;
 /* Ticks spent in each phase of the last paint: setup, world pass, chrome. */
 long Sprite_Phase[3];
 /* Last painted rectangle: width and height, for the harness receipt. */
@@ -130,6 +138,7 @@ static void MarkDirty(const Rect *r);
 static void FlushDirty(void);
 static void GameWindow_Update(void);
 static void GameWindow_Render(void);
+static void GameWindow_DrawOverlay(void);
 static void DrawWorld(Rect *view);
 static void PaintQuad(short x0, short y0, short x1, short y1, short x2, short y2, short x3,
                       short y3, BlockID id, short face, short shade, short variation);
@@ -1005,13 +1014,15 @@ static void DrawSelectionBox(short x, short y, short z)
     Iso_Project(x, y, z, sCamX, sCamY, &sx, &sy);
     sx = (short)(sx + sDisplayRect.left);
     sy = (short)(sy + sDisplayRect.top);
+    Sprite_BoxDraws++;
 
     /* Pixels, not QuickDraw strokes: a stroke is clipped to the paint's update
      * region, so a repaint that did not include the box left the old one on
      * screen and the wireframe looked like it was the wrong tile. Two pixels per
-     * row along a 2:1 slope is all the geometry needs. */
-    Sprite_BeginFrame();
-    Sprite_SetView(&sDisplayRect);
+     * row along a 2:1 slope is all the geometry needs.
+     *
+     * The pixel frame is the caller's: opening another one here unlocked the
+     * screen in the middle of the paint and the fills went nowhere. */
 
     /* Upper half of the diamond, then the lower. */
     for (i = 0; i <= kTileH / 2; i++) {
@@ -1249,28 +1260,33 @@ static Boolean GameWindow_HandleKeyDown(char key)
     case 'a':
     case 'A':
         sIntentX = -1;
+        sIntentUntil = (unsigned long)TickCount() + kIntentHoldTicks;
         return true;
 
     case kRightArrowKey:
     case 'd':
     case 'D':
         sIntentX = 1;
+        sIntentUntil = (unsigned long)TickCount() + kIntentHoldTicks;
         return true;
 
     case kUpArrowKey:
     case 'w':
     case 'W':
         sIntentY = -1;
+        sIntentUntil = (unsigned long)TickCount() + kIntentHoldTicks;
         return true;
 
     case kDownArrowKey:
     case 's':
     case 'S':
         sIntentY = 1;
+        sIntentUntil = (unsigned long)TickCount() + kIntentHoldTicks;
         return true;
 
     case ' ':
         sJumpHeld = true;
+        sIntentUntil = (unsigned long)TickCount() + kIntentHoldTicks;
         return true;
 
     default:
@@ -1380,10 +1396,10 @@ static void GameWindow_Render(void)
     Sprite_Phase[1] = 0;
     Sprite_Phase[2] = 0;
 
-    if (fullPaint) {
-        BackPat(&qd.white);
-        DrawStandardFrame(sWindow);
-    }
+    /* The play area is never whitened before it is drawn: the world pass covers
+     * every pixel of it, and erasing first is exactly the white box that showed
+     * up whenever a region was dirty. Only the margins outside the play area are
+     * erased, below. */
 
     /* Play area background. Not black: with a colour port QuickDraw fills from
      * the pen pattern, so a dark background plus dark fills made the entire
@@ -1497,9 +1513,6 @@ static void GameWindow_Render(void)
                     (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
                     sWalkPhase, (Boolean)!sPlayer.onGround);
         HUD_DrawCrosshair();
-        if (sHoverValid) {
-            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
-        }
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
     }
@@ -1510,9 +1523,6 @@ static void GameWindow_Render(void)
          * whenever the play area is anywhere in the clip. */
         Sprite_BeginFrame();
         HUD_DrawCrosshair();
-        if (sHoverValid) {
-            DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
-        }
         HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
         Sprite_EndFrame();
     }
@@ -1627,9 +1637,35 @@ static void GameWindow_Update(void)
     GameWindow_Render();
 
     EndUpdate(sWindow);
+
+    /* After the update pass: no update region, so the wireframe lands on the
+     * block it belongs to instead of being clipped away. */
+    GameWindow_DrawOverlay();
 }
 
-/* Handle all events for the game window */
+/* Everything drawn on top of the finished frame, with no update region in the
+ * way: the selection box is QuickDraw, and a stroke made inside BeginUpdate is
+ * clipped to the damage, which is what left the old box on screen and made the
+ * highlight look like it belonged to another tile. */
+static void GameWindow_DrawOverlay(void)
+{
+    GrafPtr saved;
+
+    if (!sInitialized || sWindow == NULL || !sIsVisible || !sHoverValid) {
+        return;
+    }
+
+    GetPort(&saved);
+    SetPort(sWindow);
+    SetClip(NULL);
+    PenNormal();
+    PenSize(1, 1);
+    ForeColor(blackColor);
+    PenPat(&qd.black);
+    DrawSelectionBox(sHoverX, sHoverY, (short)(sHoverZ - 1));
+    SetPort(saved);
+}
+
 void GameWindow_HandleEvent(EventRecord *event)
 {
     if (!sIsVisible || sWindow == NULL) {
@@ -1637,6 +1673,15 @@ void GameWindow_HandleEvent(EventRecord *event)
     }
 
     switch (event->what) {
+    case keyUp:
+        /* Releasing the key stops the walk on the spot rather than letting the
+         * hold deadline expire. */
+        sIntentX = 0;
+        sIntentY = 0;
+        sJumpHeld = false;
+        sIntentUntil = 0;
+        break;
+
     case keyDown:
     case autoKey:
         /* Command-key combinations belong to the menu bar (MenuKey). */
@@ -2045,10 +2090,13 @@ void GameWindow_Idle(void)
                 MarkDirty(&figure);
             }
 
-            /* One key press is one nudge, not a held movement. */
-            sIntentX = 0;
-            sIntentY = 0;
-            sJumpHeld = false;
+            /* The intent is cleared by key-up, or here when the repeats stop
+             * arriving (the keyboard driver may go quiet mid-hold). */
+            if ((unsigned long)TickCount() > sIntentUntil) {
+                sIntentX = 0;
+                sIntentY = 0;
+                sJumpHeld = false;
+            }
         }
     }
 
