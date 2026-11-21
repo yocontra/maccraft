@@ -28,6 +28,12 @@ typedef struct {
     long vx, vy, vz; /* velocity in blocks per tick, 16.16 */
     Boolean onGround;
     short respawns; /* how many times the player fell out of the world */
+    /* Feel: jump requests are remembered for a few ticks, and the ground stays
+     * "there" for a few ticks after stepping off it. Without these a jump that
+     * lands one tick early is simply lost, which is what makes precise platform
+     * jumps feel like the game is dropping inputs. */
+    unsigned char jumpBuffer;
+    unsigned char coyote;
 } Player;
 
 void Player_Spawn(Player *p, short x, short y, short z);

@@ -22,6 +22,12 @@
 #define kPlayerJumpSpeed 27525L
 /* 0.10 * 65536 == 6553.6, rounded up; ten ticks travel 1.00006 blocks. */
 #define kPlayerWalkSpeed 6554L
+/* Jump feel: how long a jump request is remembered, and how long the ground
+ * counts as still there after walking off it. Four ticks is about 65 ms, which
+ * is roughly the error a player makes at 60 Hz. */
+#define kJumpBufferTicks 5
+#define kCoyoteTicks 4
+
 /* In water: a slow sink, and a paddle that lifts the player a little. */
 #define kPlayerWaterGravity 1311L   /* 0.02 blocks per tick */
 #define kPlayerSwimSpeed 6554L      /* 0.10 blocks per tick */
@@ -407,6 +413,8 @@ void Player_Spawn(Player *p, short x, short y, short z)
     p->vz = 0;
     p->onGround = false;
     p->respawns = 0;
+    p->jumpBuffer = 0;
+    p->coyote = 0;
 }
 
 void Player_Step(Player *p, short moveX, short moveY, Boolean jump)
@@ -422,14 +430,36 @@ void Player_Step(Player *p, short moveX, short moveY, Boolean jump)
     p->vx = (long)moveX * speed;
     p->vy = (long)moveY * speed;
 
+    /* Remember a jump for a few ticks, and grant a short grace period after
+     * leaving the ground, so a jump pressed just before landing or just after
+     * stepping off a ledge still happens. */
+    if (jump) {
+        p->jumpBuffer = kJumpBufferTicks;
+    }
+    else if (p->jumpBuffer > 0) {
+        p->jumpBuffer--;
+    }
     if (p->onGround) {
-        if (jump) {
-            p->vz = kPlayerJumpSpeed;
-            p->onGround = false; /* leave the floor this tick */
-        } else {
-            p->vz = 0; /* grounded and not jumping: no falling */
-        }
-    } else if (InWater(p->x, p->y, p->z)) {
+        p->coyote = kCoyoteTicks;
+    }
+    else if (p->coyote > 0) {
+        p->coyote--;
+    }
+
+    /* The coyote window only *allows* a jump; it must never suppress gravity,
+     * or the tick after take-off (when the window is still open) would cancel
+     * the jump outright. */
+    if ((p->onGround || p->coyote > 0) && !InWater(p->x, p->y, p->z) &&
+        p->jumpBuffer > 0) {
+        p->vz = kPlayerJumpSpeed;
+        p->onGround = false; /* leave the floor this tick */
+        p->jumpBuffer = 0;
+        p->coyote = 0;
+    }
+    else if (p->onGround) {
+        p->vz = 0; /* grounded and not jumping: no falling */
+    }
+    else if (InWater(p->x, p->y, p->z)) {
         /* Swimming: the pond is deep enough to stand in nowhere, so the water
          * holds the body up. Holding jump paddles upward, otherwise the player
          * sinks gently to the bottom instead of falling at full speed. */
@@ -442,7 +472,8 @@ void Player_Step(Player *p, short moveX, short moveY, Boolean jump)
                 p->vz = -kPlayerSwimSpeed;
         }
         p->onGround = false;
-    } else {
+    }
+    else {
         p->vz -= kPlayerGravity;
         if (p->vz < -kPlayerMaxFall)
             p->vz = -kPlayerMaxFall;

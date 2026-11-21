@@ -238,6 +238,73 @@ static void TestWalkUpStep(void)
     }
 }
 
+/*
+ * 4c. Jump feel. A press that arrives a few ticks before landing must still
+ * jump, and a press a few ticks after walking off a ledge must still jump --
+ * otherwise precise jumps feel like dropped input.
+ */
+static void TestJumpGrace(void)
+{
+    Player p;
+    int i;
+    int jumped;
+
+    /* Buffered: press jump while falling, land within the buffer window. */
+    ClearWorld();
+    FillGround(0, 47, 0, 47, 0);
+    Player_Spawn(&p, 10, 10, 1);
+    for (i = 0; i < 5; i++)
+        Player_Step(&p, 0, 0, false);
+    CHECK(p.onGround);
+
+    Player_Step(&p, 0, 0, true);       /* take off */
+    for (i = 0; i < 30 && !p.onGround; i++)
+        Player_Step(&p, 0, 0, false);
+    CHECK(p.onGround);
+
+    jumped = 0;
+    Player_Step(&p, 0, 0, true);       /* take off again */
+    for (i = 0; i < 40; i++) {
+        /* Press just before touching down: that press is buffered, and fires on
+         * landing a tick or two later. */
+        if (p.vz < 0 && p.z <= (kPlayerOne + 3 * 5243L)) {
+            Player_Step(&p, 0, 0, true);   /* the early press */
+            for (i = 0; i < 4; i++) {
+                Player_Step(&p, 0, 0, false);
+                if (p.vz > 0 || !p.onGround) {
+                    jumped = 1;
+                }
+            }
+            break;
+        }
+        Player_Step(&p, 0, 0, false);
+    }
+    CHECK(jumped);
+
+    /* Coyote: walk off the edge of the floor, then jump a tick later. */
+    ClearWorld();
+    {
+        short x, y;
+
+        for (x = 0; x < 18; x++)
+            for (y = 0; y < 20; y++)
+                World_Set(x, y, 0, 1);
+    }
+    /* Spawn near the edge and walk until the body is off it. */
+    Player_Spawn(&p, 16, 10, 1);
+    for (i = 0; i < 5; i++)
+        Player_Step(&p, 0, 0, false);
+    CHECK(p.onGround);
+    for (i = 0; i < 30 && p.onGround; i++)
+        Player_Step(&p, 1, 0, false);
+    CHECK(!p.onGround);                /* the coyote window is open now */
+    jumped = 0;
+    Player_Step(&p, 1, 0, true);
+    if (p.vz > 0)
+        jumped = 1;
+    CHECK(jumped);
+}
+
 /* 5. A two-block wall stops the player at its face while staying grounded. */
 static void TestWalls(void)
 {
@@ -372,6 +439,7 @@ int main(void)
     TestJumping();
     TestStepUp();
     TestWalkUpStep();
+    TestJumpGrace();
     TestWalls();
     TestFallingOff();
     TestNoTunnelling();
