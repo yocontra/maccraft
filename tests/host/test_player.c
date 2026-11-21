@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "blocks.h"
 #include "player.h"
 #include "world.h"
 
@@ -305,6 +306,50 @@ static void TestJumpGrace(void)
     CHECK(jumped);
 }
 
+/*
+ * 4d. Water: not solid. The body sinks to the bed, holding jump paddles it up
+ * past the surface, releasing sinks it again.
+ */
+static void TestSwimming(void)
+{
+    Player p;
+    int i;
+    short x, y;
+
+    ClearWorld();
+    for (x = 20; x < 30; x++)
+        for (y = 20; y < 30; y++) {
+            World_Set(x, y, 0, kBlockGrass);
+            World_Set(x, y, 1, kBlockWater);
+        }
+
+    Player_Spawn(&p, 25, 25, 4);
+    for (i = 0; i < 90; i++)
+        Player_Step(&p, 0, 0, false);
+
+    /* Standing on the pond bed, not on the water surface. */
+    CHECK(p.z == kPlayerOne);
+    CHECK(p.onGround);
+
+    /* Paddling lifts the feet to the surface (water top is 2.0). The body bobs
+     * there rather than sticking, so check the peak, not the last tick. */
+    {
+        long peak = p.z;
+
+        for (i = 0; i < 120; i++) {
+            Player_Step(&p, 0, 0, true);
+            if (p.z > peak)
+                peak = p.z;
+        }
+        CHECK(peak >= 2 * kPlayerOne);
+    }
+
+    /* Letting go sinks back to the bed. */
+    for (i = 0; i < 200; i++)
+        Player_Step(&p, 0, 0, false);
+    CHECK(p.z == kPlayerOne);
+}
+
 /* 5. A two-block wall stops the player at its face while staying grounded. */
 static void TestWalls(void)
 {
@@ -440,6 +485,7 @@ int main(void)
     TestStepUp();
     TestWalkUpStep();
     TestJumpGrace();
+    TestSwimming();
     TestWalls();
     TestFallingOff();
     TestNoTunnelling();

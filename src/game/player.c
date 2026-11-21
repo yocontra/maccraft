@@ -446,23 +446,9 @@ void Player_Step(Player *p, short moveX, short moveY, Boolean jump)
         p->coyote--;
     }
 
-    /* The coyote window only *allows* a jump; it must never suppress gravity,
-     * or the tick after take-off (when the window is still open) would cancel
-     * the jump outright. */
-    if ((p->onGround || p->coyote > 0) && !InWater(p->x, p->y, p->z) &&
-        p->jumpBuffer > 0) {
-        p->vz = kPlayerJumpSpeed;
-        p->onGround = false; /* leave the floor this tick */
-        p->jumpBuffer = 0;
-        p->coyote = 0;
-    }
-    else if (p->onGround) {
-        p->vz = 0; /* grounded and not jumping: no falling */
-    }
-    else if (InWater(p->x, p->y, p->z)) {
-        /* Swimming: the pond is deep enough to stand in nowhere, so the water
-         * holds the body up. Holding jump paddles upward, otherwise the player
-         * sinks gently to the bottom instead of falling at full speed. */
+    /* Water is checked first: a player standing on a pond bed is still in
+     * water, and that case must paddle rather than be treated as grounded. */
+    if (InWater(p->x, p->y, p->z)) {
         if (jump) {
             p->vz = kPlayerSwimSpeed;
         }
@@ -472,6 +458,18 @@ void Player_Step(Player *p, short moveX, short moveY, Boolean jump)
                 p->vz = -kPlayerSwimSpeed;
         }
         p->onGround = false;
+    }
+    /* The coyote window only *allows* a jump; it must never suppress gravity,
+     * or the tick after take-off (when the window is still open) would cancel
+     * the jump outright. */
+    else if ((p->onGround || p->coyote > 0) && p->jumpBuffer > 0) {
+        p->vz = kPlayerJumpSpeed;
+        p->onGround = false; /* leave the floor this tick */
+        p->jumpBuffer = 0;
+        p->coyote = 0;
+    }
+    else if (p->onGround) {
+        p->vz = 0; /* grounded and not jumping: no falling */
     }
     else {
         p->vz -= kPlayerGravity;
