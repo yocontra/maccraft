@@ -20,7 +20,7 @@
 #include "../game/blocks.h"
 
 #define kSlotW 32
-#define kSlotH 20
+#define kSlotH 26
 #define kSlotGap 4
 #define kStripH 14
 #define kTextSize 9
@@ -157,9 +157,20 @@ void HUD_DrawHotbar(BlockID selected, short kinds)
         Fill(&slot, kHudSlot);
         Frame(&slot, kHudEdge);
 
-        /* The icon is the block's own top face, a 32x16 diamond, which reads as
-         * a mini block the way Minecraft's hotbar icons do. */
-        Sprite_Draw(slot.left, (short)(slot.top + 2), (BlockID)(i + 1), kBlockFaceTop, 0);
+        /* The icon is the whole cube, not just its top face: top diamond plus
+         * both side faces, in the same projection the world uses, so the slot
+         * shows a block rather than a lozenge of texture. */
+        {
+            short cx = (short)(slot.left + kSlotW / 2);
+            short cy = (short)(slot.top + kSlotH / 2 + 1);
+            BlockID id = (BlockID)(i + 1);
+
+            /* Sides first, darker, then the top: the same order as the world,
+             * so the seams land where they do on a real block. */
+            Sprite_Draw((short)(cx - kSlotW / 2), cy, id, kBlockFaceLeft, 1);
+            Sprite_Draw(cx, cy, id, kBlockFaceRight, 2);
+            Sprite_Draw((short)(cx - kSlotW / 2), (short)(cy - 8), id, kBlockFaceTop, 0);
+        }
     }
 
     /* Selected slot: a two-pixel white frame just outside the slot. */

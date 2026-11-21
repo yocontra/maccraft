@@ -145,6 +145,9 @@ static void SpawnPlayerOnClearGround(void);
  * that colour and fill with an all-ones pattern. */
 static Boolean sHasColor = false;
 
+/* The damage this paint is for, before it was clamped to the play area. */
+static Rect sDamageBox;
+
 static void DetectColor(void)
 {
     PixMapHandle pm;
@@ -612,6 +615,7 @@ Boolean GameWindow_SelectBlockType(short index)
     sBlockType = index;
     Sfx_Play(kSfxClick);
     MarkDirty(&sBlockSelectorRect);
+    sStripDirty = true;
     return true;
 }
 
@@ -673,9 +677,11 @@ static void UpdateHover(void)
     }
 
     if (Hover_Update(mouse, &sDisplayRect, sCamX, sCamY, &dirty)) {
-        MarkDirty(&dirty);
-        /* The readout follows the pointer; it is drawn outside the update
-         * region, from the idle loop. */
+        /* Only the ring's old box: the tiles under the new one are not damaged,
+         * because the ring itself is drawn straight to the screen. */
+        if (dirty.right > dirty.left && dirty.bottom > dirty.top) {
+            MarkDirty(&dirty);
+        }
         sStripDirty = true;
     }
 }
@@ -1112,7 +1118,10 @@ static void GameWindow_Render(void)
         if (sWindow->visRgn != NULL) {
             Rect box = (*sWindow->visRgn)->rgnBBox;
 
-
+            /* The chrome lives outside the play area, so the tests below need the
+             * damage before it was clamped to the display: a repaint aimed at the
+             * hotbar has an empty play-area rect by construction. */
+            sDamageBox = box;
             if (!SectRect(&box, &sDisplayRect, &sRenderRect)) {
                 SetRect(&sRenderRect, 0, 0, 0, 0);
             }
@@ -1296,6 +1305,10 @@ static void GameWindow_Render(void)
                 HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
             }
         }
+
+        /* The ring is drawn through the pixel path, so it is not clipped by the
+         * update region: it lands even when the repaint only covers the box it
+         * is leaving. */
         Hover_Draw(&sDisplayRect, sCamX, sCamY);
         Sprite_EndFrame();
     }
@@ -1361,11 +1374,15 @@ static void GameWindow_Render(void)
         Boolean wantsStrip = fullPaint || sStripDirty;
         Boolean wantsHotbar = fullPaint;
 
-        chrome = sTitleStripRect;
-        UnionRect(&sBlockSelectorRect, &chrome, &chrome);
-        if (!SectRect(&sRenderRect, &chrome, &touched)) {
-            wantsStrip = false;
-            wantsHotbar = false;
+        /* Either strip is redrawn when the damage reaches it. The old test only
+         * ever *cleared* these flags, so a repaint aimed at the hotbar (a menu
+         * toggle, a click on a slot) redrew nothing and the white selection
+         * frame stayed where it was. */
+        if (SectRect(&sDamageBox, &sTitleStripRect, &touched)) {
+            wantsStrip = true;
+        }
+        if (SectRect(&sDamageBox, &sBlockSelectorRect, &touched)) {
+            wantsHotbar = true;
         }
         Sprite_BeginFrame();
         if (wantsStrip) {
@@ -1739,6 +1756,7 @@ void GameWindow_ToggleBlockType(void)
 
     sBlockType = (short)((sBlockType + 1) % kGameNumBlockTypes);
     MarkDirty(&sBlockSelectorRect);
+    sStripDirty = true;   /* the readout names the block that would be placed */
 }
 
 /* Perform idle processing: turn a recorded dirty rect into an InvalRect. */
@@ -1962,6 +1980,7 @@ void GameWindow_Idle(void)
         Sprite_Work[0] += (long)((unsigned long)TickCount() - t0);
         Sprite_Work[1]++;
     }
+
     /* Keep the held block's swing animating: nothing else invalidates it, and
      * only the block's own corner needs repainting. */
     if (sSwingUntil > (unsigned long)TickCount()) {

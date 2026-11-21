@@ -333,6 +333,11 @@ void Remote_Apply(const char *cmd)
         }
         Remote_SetResult(result);
     }
+    else if (strncmp(cmd, "toggle", 6) == 0) {
+        /* Same entry point the Game menu's Toggle Block Type uses. */
+        GameWindow_ToggleBlockType();
+        Remote_SetResult("toggle");
+    }
     else if (strncmp(cmd, "stats", 5) == 0) {
         Remote_ReportStats(Sprite_Work[2], Sprite_Work[3], Sprite_Work[5]);
         {

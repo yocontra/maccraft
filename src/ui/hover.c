@@ -128,12 +128,16 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
             *dirty = oldBox;
             return true;
         }
+        /* Only the box the ring is *leaving* is damaged. The ring at its new
+         * tile is drawn by the same paint through the pixel path, which is not
+         * clipped by the update region -- so unioning the two boxes (which for a
+         * fast pointer spans everything in between) buys nothing. */
         BoxFor(sTileX, sTileY, sLevel, &newBox);
         if (wasValid) {
-            UnionRect(&newBox, &oldBox, dirty);
+            *dirty = oldBox;
         }
         else {
-            *dirty = newBox;
+            SetRect(dirty, 0, 0, 0, 0);
         }
     }
     return true;
@@ -165,10 +169,98 @@ void Hover_Tile(short *x, short *y, short *z)
     }
 }
 
+/* Save-under for the ring: the pixels it covered, and where they were. Moving
+ * the ring costs one restore plus one save, and damages nothing -- which is the
+ * whole point: a pointer move used to schedule a repaint of the tiles under the
+ * old ring, and those tiles were usually identical to what was already there. */
+#define kRingW 40
+#define kRingH 40
+/* The saved box covers the whole wireframe (32 rows) plus slack, starting 12 px
+ * above the tile centre. */
+
+
+static unsigned long sRingUnder[kRingW * kRingH];
+static Boolean sRingSaved = false;
+static Rect sRingRect;
+
+static void RingRectFor(short sx, short sy, Rect *out)
+{
+    /* The cube wireframe spans sy-8 (diamond top) to sy+24 (side bottoms), so
+     * the saved box has to cover all 32 rows plus slack. A box that was two rows
+     * short left the bottom edge of the old ring on screen. */
+    SetRect(out, (short)(sx - kRingW / 2), (short)(sy - 12),
+            (short)(sx + kRingW / 2), (short)(sy + 28));
+}
+
+/* Forget the saved pixels: something else painted over them (a world repaint, a
+ * pan), so they are no longer what is on screen. */
+void Hover_Forget(void)
+{
+    sRingSaved = false;
+}
+
+Boolean Hover_RingRect(Rect *out)
+{
+    if (!sRingSaved || out == NULL) {
+        return false;
+    }
+    *out = sRingRect;
+    return true;
+}
+
+/* Put the ring back where it belongs, without a repaint.
+ *
+ * Called from the idle loop after Hover_Update: the old pixels are restored,
+ * the ring is stroked at the current tile, and the pixels under it are saved for
+ * next time. */
+void Hover_Redraw(const Rect *display, short camX, short camY)
+{
+    short sx, sy;
+    Rect box;
+
+    if (!sValid || display == NULL) {
+        if (sRingSaved) {
+            Sprite_WriteRect(&sRingRect, sRingUnder, kRingW);
+            sRingSaved = false;
+        }
+        return;
+    }
+
+    Iso_Project(sTileX, sTileY, sLevel, camX, camY, &sx, &sy);
+    sx = (short)(sx + display->left);
+    sy = (short)(sy + display->top);
+    RingRectFor(sx, sy, &box);
+
+    /* The cursor lives in the same framebuffer: saving or restoring over it
+     * would paint a white block where the pointer used to be. Mac OS has to be
+     * told to take it away while the pixels underneath are touched. */
+    HideCursor();
+
+    if (sRingSaved) {
+        Sprite_WriteRect(&sRingRect, sRingUnder, kRingW);
+        sRingSaved = false;
+    }
+    if (box.left == sRingRect.left && box.top == sRingRect.top && sRingSaved) {
+        ShowCursor();
+        return;
+    }
+
+    Sprite_BeginFrame();
+    Sprite_SetView(display);
+    Hover_Draw(display, camX, camY);
+    Sprite_ReadRect(&box, sRingUnder, kRingW);
+    Sprite_EndFrame();
+
+    ShowCursor();
+
+    sRingRect = box;
+    sRingSaved = true;
+}
+
 void Hover_Draw(const Rect *display, short camX, short camY)
 {
     short sx, sy;
-    short top, left, right;
+    short i;
 
     if (!sValid || display == NULL) {
         return;
@@ -181,35 +273,50 @@ void Hover_Draw(const Rect *display, short camX, short camY)
     sx = (short)(sx + display->left);
     sy = (short)(sy + display->top);
 
-    top   = (short)(sy - kTileH / 2);
-    left  = (short)(sx - kTileW / 2);
-    right = (short)(sx + kTileW / 2);
+    /* Pixels, not QuickDraw strokes: a stroke is clipped to the update region,
+     * and the ring is deliberately drawn outside the damaged box -- the box only
+     * covers where the ring *was*. Two pixels per row along the 2:1 slopes is
+     * the whole geometry.
+     *
+     * The cursor lives in the same framebuffer, so Mac OS restores a white patch
+     * wherever the ring is written under it; hiding it for the few hundred
+     * pixels of the ring is cheaper than the artefact. */
+    HideCursor();
+    for (i = 0; i <= kTileH / 2; i++) {
+        short rowY = (short)(sy - kTileH / 2 + i);
+        Rect run;
 
-    /* QuickDraw, inside the update pass: the strip's text proves that path
-     * draws here, and the damage rect that carries this repaint is exactly the
-     * box below, so the strokes are not clipped away. */
-    PenNormal();
-    PenSize(1, 1);
-    /* ForeColor on a direct-colour port maps through the palette and came out
-     * dark red; the wireframe wants actual black. */
-    {
-        RGBColor black = {0, 0, 0};
-
-        RGBForeColor(&black);
+        SetRect(&run, (short)(sx - i * 2), rowY, (short)(sx - i * 2 + 2), (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
+        SetRect(&run, (short)(sx + i * 2 - 1), rowY, (short)(sx + i * 2 + 1), (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
     }
-    PenPat(&qd.black);
+    for (i = 1; i <= kTileH / 2; i++) {
+        short rowY = (short)(sy + i - 1);
+        Rect run;
 
-    MoveTo(sx, top);
-    LineTo(right, sy);
-    LineTo(sx, (short)(sy + kTileH / 2));
-    LineTo(left, sy);
-    LineTo(sx, top);
+        SetRect(&run, (short)(sx - kTileW / 2 + i * 2), rowY,
+                (short)(sx - kTileW / 2 + i * 2 + 2), (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
+        SetRect(&run, (short)(sx + kTileW / 2 - i * 2 - 2), rowY,
+                (short)(sx + kTileW / 2 - i * 2), (short)(rowY + 1));
+        Sprite_FillRect(&run, 0x000000UL);
+    }
 
-    MoveTo(sx, (short)(sy + kTileH / 2));
-    LineTo(sx, (short)(sy + kTileH / 2 + kTileH));
-    MoveTo(left, sy);
-    LineTo(left, (short)(sy + kTileH));
-    MoveTo(right, sy);
-    LineTo(right, (short)(sy + kTileH));
+    /* The three vertical edges at the silhouette corners. */
+    {
+        Rect edge;
 
+        SetRect(&edge, sx, (short)(sy + kTileH / 2), (short)(sx + 1),
+                (short)(sy + kTileH / 2 + kTileH));
+        Sprite_FillRect(&edge, 0x000000UL);
+        SetRect(&edge, (short)(sx - kTileW / 2), sy, (short)(sx - kTileW / 2 + 1),
+                (short)(sy + kTileH));
+        Sprite_FillRect(&edge, 0x000000UL);
+        SetRect(&edge, (short)(sx + kTileW / 2 - 1), sy, (short)(sx + kTileW / 2),
+                (short)(sy + kTileH));
+        Sprite_FillRect(&edge, 0x000000UL);
+    }
+
+    ShowCursor();
 }

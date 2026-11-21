@@ -487,6 +487,65 @@ void Sprite_ScrollRect(const Rect *r, short dx, short dy)
     }
 }
 
+/*
+ * Save-under: copy a rectangle of screen pixels out and back.
+ *
+ * This is how an overlay (the hover ring, the figure) moves without damaging
+ * anything: the pixels it covered are put back, so nothing has to be redrawn
+ * underneath it. The rect is in local coordinates like every other sprite call,
+ * and `stride` is the width of the square buffer in pixels.
+ */
+void Sprite_ReadRect(const Rect *r, unsigned long *buf, short stride)
+{
+    short x, y;
+
+    if (!sReady || sScreenBase == NULL || r == NULL || buf == NULL) {
+        return;
+    }
+
+    for (y = 0; y < stride; y++) {
+        short sy = (short)(r->top + sOriginY + y);
+        unsigned long *line;
+
+        if (sy < 0 || sy >= sScreenHeight) {
+            continue;
+        }
+        line = (unsigned long *)(sScreenBase + (long)sy * sScreenRowBytes);
+        for (x = 0; x < stride; x++) {
+            short sx = (short)(r->left + sOriginX + x);
+
+            buf[(long)y * stride + x] =
+                (sx < 0 || sx >= sScreenWidth) ? 0 : line[sx];
+        }
+    }
+}
+
+void Sprite_WriteRect(const Rect *r, const unsigned long *buf, short stride)
+{
+    short x, y;
+
+    if (!sReady || sScreenBase == NULL || r == NULL || buf == NULL) {
+        return;
+    }
+
+    for (y = 0; y < stride; y++) {
+        short sy = (short)(r->top + sOriginY + y);
+        unsigned long *line;
+
+        if (sy < 0 || sy >= sScreenHeight) {
+            continue;
+        }
+        line = (unsigned long *)(sScreenBase + (long)sy * sScreenRowBytes);
+        for (x = 0; x < stride; x++) {
+            short sx = (short)(r->left + sOriginX + x);
+
+            if (sx >= 0 && sx < sScreenWidth) {
+                line[sx] = buf[(long)y * stride + x];
+            }
+        }
+    }
+}
+
 void Sprite_SetView(const Rect *view)
 {
     if (view != NULL) {

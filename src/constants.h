@@ -101,7 +101,7 @@ enum {
 enum {
     kWindowMargin            = 10,
     kGameViewMargin          = 10,
-    kGameBlockSelectorHeight = 36,
+    kGameBlockSelectorHeight = 42,   /* tall enough for a cube icon */
     kGameTitleStripHeight    = 16   /* "MacCraft" + block/camera readout */
 };
 

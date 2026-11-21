@@ -20,6 +20,11 @@ Boolean Sprite_Ready(void);
 /* Play area, in the window's local coordinates; blits are trimmed to it. */
 void Sprite_SetView(const Rect *view);
 
+/* Save-under for overlays: copy a local-coordinate square of screen pixels out,
+ * and back. `stride` is the square's side in pixels. */
+void Sprite_ReadRect(const Rect *r, unsigned long *buf, short stride);
+void Sprite_WriteRect(const Rect *r, const unsigned long *buf, short stride);
+
 /* Shift the pixels inside r by (dx, dy) within the screen. Used to scroll the
  * previous frame when the camera pans, so only the exposed strip is redrawn. */
 void Sprite_ScrollRect(const Rect *r, short dx, short dy);
