@@ -36,4 +36,7 @@ void Player_Spawn(Player *p, short x, short y, short z);
 void Player_Step(Player *p, short moveX, short moveY, Boolean jump);
 void Player_Restore(Player *p, const Player *saved); /* for tests */
 
+/* True when the player's body is in water (wading or swimming). */
+Boolean Player_InWater(const Player *p);
+
 #endif

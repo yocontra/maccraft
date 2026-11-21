@@ -21,6 +21,7 @@
 #include "../game/world.h"
 #include "game_window.h"
 #include "hover.h"
+#include "particles.h"
 #include "hud.h"
 #include "remote.h"
 #include "world_view.h"
@@ -80,6 +81,9 @@ long Sprite_Phase[3];
 
 
 static short sWalkPhase = 0;
+/* Whether the player was in water last tick, so entering it can be heard once
+ * rather than every tick. */
+static Boolean sWasInWater = false;
 
 /* Hold-to-break: shift-click starts mining the tile under the cursor, the idle
  * loop advances it while the button is still down, and the block comes away when
@@ -87,6 +91,7 @@ static short sWalkPhase = 0;
  * what a Minecraft-like should feel like. */
 static Boolean sBreaking = false;
 static short sBreakX = 0;
+static BlockID sBreakId = 0;
 static short sBreakY = 0;
 static short sBreakZ = 0;
 static short sBreakTicks = 0;
@@ -367,8 +372,14 @@ static void FinishBreak(void)
         return;
     }
     if (World_Set(sBreakX, sBreakY, sBreakZ, 0)) {
-        Sfx_Play(kSfxBreak);
+        Boolean hard = (Boolean)(sBreakId == kBlockStone ||
+                                 sBreakId == kBlockCobblestone ||
+                                 sBreakId == kBlockBrick ||
+                                 sBreakId == kBlockBedrock);
+
+        Sfx_Play(hard ? kSfxBreakStone : kSfxBreak);
         Hover_Reset();
+        Particles_Spawn(sBreakX, sBreakY, sBreakZ, sBreakId);
     }
     sBreaking = false;
     sBreakTicks = 0;
@@ -495,6 +506,28 @@ static void CentreOnPlayer(void)
  * play area do not land on this port, and the sky is painted by the sprite
  * layer for exactly that reason. Positions come from sky.c, which owns the
  * layout, so the mono path and this one agree on where clouds are. */
+/* Vertical sky gradient: deep blue overhead, pale at the horizon.
+ *
+ * A flat fill is what the first version did, and on a 1024x768 screen that is a
+ * lot of flat colour. Bands cost nothing extra -- the same pixels are written,
+ * just in strips -- and give the view a horizon. */
+#define kSkyBands 16
+#define kSkyTopColour 0x4A86E8UL
+#define kSkyHorizonColour 0xC4DCF5UL
+
+static unsigned long SkyBandColour(short band)
+{
+    long t = (long)band * 255L / (kSkyBands - 1);
+    long r = ((long)((kSkyTopColour >> 16) & 0xFF) * (255 - t) +
+              (long)((kSkyHorizonColour >> 16) & 0xFF) * t) / 255;
+    long g = ((long)((kSkyTopColour >> 8) & 0xFF) * (255 - t) +
+              (long)((kSkyHorizonColour >> 8) & 0xFF) * t) / 255;
+    long b = ((long)(kSkyTopColour & 0xFF) * (255 - t) +
+              (long)(kSkyHorizonColour & 0xFF) * t) / 255;
+
+    return ((unsigned long)r << 16) | ((unsigned long)g << 8) | (unsigned long)b;
+}
+
 static void DrawClouds(void)
 {
     short rectCount = Sky_CloudRectCount();
@@ -865,6 +898,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                 sBreakX = x;
                 sBreakY = y;
                 sBreakZ = topZ;
+                sBreakId = World_Get(sBreakX, sBreakY, sBreakZ);
                 sBreakTicks = 0;
             }
         }
@@ -1178,7 +1212,30 @@ static void GameWindow_Render(void)
              * every partial invalidation (a block placement, a hover move). */
             Sprite_BeginFrame();
             Sprite_SetView(&sRenderRect);
-            Sprite_FillRect(&sRenderRect, 0x78A7FFUL);
+            {
+                short height = (short)(sDisplayRect.bottom - sDisplayRect.top);
+                short band;
+
+                for (band = 0; band < kSkyBands; band++) {
+                    Rect strip;
+                    short top = (short)(sDisplayRect.top +
+                                        (short)((long)height * band / kSkyBands));
+                    short bottom = (short)(sDisplayRect.top +
+                                           (short)((long)height * (band + 1) / kSkyBands));
+
+                    strip = sRenderRect;
+                    if (strip.top < top) {
+                        strip.top = top;
+                    }
+                    if (strip.bottom > bottom) {
+                        strip.bottom = bottom;
+                    }
+                    if (strip.bottom <= strip.top || strip.right <= strip.left) {
+                        continue;
+                    }
+                    Sprite_FillRect(&strip, SkyBandColour(band));
+                }
+            }
             DrawClouds();
             Sprite_SetView(&sDisplayRect);
             Sprite_EndFrame();
@@ -1211,6 +1268,7 @@ static void GameWindow_Render(void)
         if (sBreaking && sBreakTicks > 0) {
             DrawCrackOverlay(sBreakX, sBreakY, sBreakZ, sBreakTicks);
         }
+        Particles_Draw(&sDisplayRect, sCamX, sCamY);
         /* Each overlay is drawn only when the damage can touch it. They were
          * unconditional, so a hover repaint (about 3,450 pixels) also redrew the
          * figure, the crosshair and the held block -- the last of those alone is
@@ -1759,7 +1817,21 @@ void GameWindow_Idle(void)
                 Sfx_Play(kSfxStep);
             }
             if (sPlayer.onGround && !wasGrounded) {
-                Sfx_Play(kSfxStep);
+                Sfx_Play(sWasInWater ? kSfxSplash : kSfxLand);
+            }
+            /* Take-off: the tick the player leaves the ground under its own
+             * power, which is not the same as walking off a ledge. */
+            if (!sPlayer.onGround && wasGrounded && sPlayer.vz > 0) {
+                Sfx_Play(kSfxJump);
+            }
+            /* Entering water is worth hearing once, not every tick. */
+            {
+                Boolean inWater = Player_InWater(&sPlayer);
+
+                if (inWater && !sWasInWater) {
+                    Sfx_Play(kSfxSplash);
+                }
+                sWasInWater = inWater;
             }
 
             /* Walk cycle: advance while moving on the ground, reset in the air. */
@@ -1771,6 +1843,17 @@ void GameWindow_Idle(void)
             }
 
             CentreOnPlayer();
+
+            /* Break particles: advance them and damage where they were, so the
+             * specks leave no trail. */
+            if (Particles_Update()) {
+                Rect specks;
+
+                Particles_Bounds(&sDisplayRect, sCamX, sCamY, &specks);
+                if (specks.right > specks.left) {
+                    MarkDirty(&specks);
+                }
+            }
 
             /* Repaint only when something a viewer can see moved. */
             if (sCamX != wasCamX || sCamY != wasCamY) {

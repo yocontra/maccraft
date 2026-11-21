@@ -11,6 +11,7 @@
  * Player_Restore never changes it.
  */
 
+#include "blocks.h"
 #include "player.h"
 #include "world.h"
 
@@ -21,6 +22,10 @@
 #define kPlayerJumpSpeed 27525L
 /* 0.10 * 65536 == 6553.6, rounded up; ten ticks travel 1.00006 blocks. */
 #define kPlayerWalkSpeed 6554L
+/* In water: a slow sink, and a paddle that lifts the player a little. */
+#define kPlayerWaterGravity 1311L   /* 0.02 blocks per tick */
+#define kPlayerSwimSpeed 6554L      /* 0.10 blocks per tick */
+
 /* Terminal velocity: 3.0 blocks per tick. */
 #define kPlayerMaxFall 196608L
 /* Largest movement allowed between collision tests, 0.25 blocks.  At the
@@ -59,12 +64,44 @@ static long CellHi(long v)
 
 static Boolean CellSolid(long bx, long by, long bz)
 {
+    BlockID id;
+
     /* Check the grid before calling World_Get so that no access ever leaves
      * the array, even for a player that has fallen far below the world. */
     if (bx < 0 || bx >= kWorldX || by < 0 || by >= kWorldY ||
         bz < 0 || bz >= kWorldZ)
         return false;
-    return (Boolean)(World_Get((short)bx, (short)by, (short)bz) != 0);
+    id = World_Get((short)bx, (short)by, (short)bz);
+    /* Water is not solid: you wade and swim in it rather than standing on the
+     * surface, which is what the pond used to be. See FloatInWater. */
+    if (id == kBlockWater)
+        return false;
+    return (Boolean)(id != 0);
+}
+
+/* True when the body is in water: the cell at the feet or the one above. */
+static Boolean InWater(long x, long y, long z)
+{
+    long bx0 = CellLo(x - kPlayerHalfWidth);
+    long bx1 = CellHi(x + kPlayerHalfWidth);
+    long by0 = CellLo(y - kPlayerHalfWidth);
+    long by1 = CellHi(y + kPlayerHalfWidth);
+    long bx, by;
+
+    for (by = by0; by <= by1; by++) {
+        for (bx = bx0; bx <= bx1; bx++) {
+            long bz;
+
+            for (bz = CellLo(z); bz <= CellHi(z + kPlayerHeight); bz++) {
+                if (bz < 0 || bz >= kWorldZ || bx < 0 || bx >= kWorldX ||
+                    by < 0 || by >= kWorldY)
+                    continue;
+                if (World_Get((short)bx, (short)by, (short)bz) == kBlockWater)
+                    return true;
+            }
+        }
+    }
+    return false;
 }
 
 /* Does the box centred at (x,y) with feet at z overlap any solid block? */
@@ -89,6 +126,11 @@ static Boolean BoxHits(long x, long y, long z)
 /* Highest block top at or below the feet among the columns the box covers.
  * Returns -1 when there is nothing underneath.  Scanning all z levels (not
  * just the top one) keeps an overhang from hiding the floor below it. */
+Boolean Player_InWater(const Player *p)
+{
+    return InWater(p->x, p->y, p->z);
+}
+
 static long SurfaceBelow(long x, long y, long feet)
 {
     long bx0 = CellLo(x - kPlayerHalfWidth);
@@ -365,6 +407,19 @@ void Player_Step(Player *p, short moveX, short moveY, Boolean jump)
         } else {
             p->vz = 0; /* grounded and not jumping: no falling */
         }
+    } else if (InWater(p->x, p->y, p->z)) {
+        /* Swimming: the pond is deep enough to stand in nowhere, so the water
+         * holds the body up. Holding jump paddles upward, otherwise the player
+         * sinks gently to the bottom instead of falling at full speed. */
+        if (jump) {
+            p->vz = kPlayerSwimSpeed;
+        }
+        else {
+            p->vz -= kPlayerWaterGravity;
+            if (p->vz < -kPlayerSwimSpeed)
+                p->vz = -kPlayerSwimSpeed;
+        }
+        p->onGround = false;
     } else {
         p->vz -= kPlayerGravity;
         if (p->vz < -kPlayerMaxFall)

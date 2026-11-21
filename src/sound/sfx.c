@@ -133,6 +133,34 @@ static void Sfx_BuildEffects(void)
     list->numCommands = 2;
     Sfx_SetAmp(list, 0, 60);
     Sfx_SetNote(list, 1, 40, 1); /* E2, one tick */
+
+    /* Take-off rises, landing falls: two notes in opposite directions is
+     * enough to tell them apart without a second voice. */
+    list = &sTemplates[kSfxJump];
+    list->numCommands = 3;
+    Sfx_SetAmp(list, 0, 120);
+    Sfx_SetNote(list, 1, 60, 2); /* C4 */
+    Sfx_SetNote(list, 2, 72, 2); /* up to C5 */
+
+    list = &sTemplates[kSfxLand];
+    list->numCommands = 2;
+    Sfx_SetAmp(list, 0, 180);
+    Sfx_SetNote(list, 1, 36, 4); /* C2, short and low */
+
+    /* Water: a fast two-note wobble, quiet enough to sit under the step
+     * sounds while wading. */
+    list = &sTemplates[kSfxSplash];
+    list->numCommands = 3;
+    Sfx_SetAmp(list, 0, 110);
+    Sfx_SetNote(list, 1, 76, 1);
+    Sfx_SetNote(list, 2, 64, 2);
+
+    /* Stone breaks with a lower, harder pair than grass or dirt. */
+    list = &sTemplates[kSfxBreakStone];
+    list->numCommands = 3;
+    Sfx_SetAmp(list, 0, 210);
+    Sfx_SetNote(list, 1, 55, 2);
+    Sfx_SetNote(list, 2, 43, 3);
 }
 
 /* Release everything this module owns.  Idempotent: every pointer is nulled,

@@ -365,6 +365,15 @@ void Remote_Apply(const char *cmd)
             Remote_AppendResult(hover);
         }
     }
+    else if (strncmp(cmd, "mine", 4) == 0) {
+        const char *p = cmd + 4;
+        short mx = TakeInt(&p);
+        short my = TakeInt(&p);
+        short mz = TakeInt(&p);
+
+        Remote_SetResult("mine");
+        GameWindow_MineForTest(mx, my, mz, 60);
+    }
     else if (strncmp(cmd, "save", 4) == 0) {
         Remote_SetResult("save");
         GameWindow_SaveWorld();
