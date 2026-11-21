@@ -33,8 +33,8 @@ static void TestSetOutOfRange(void)
     CHECK(World_Set(-1, 0, 0, 1) == false);
     CHECK(World_Set(0, -1, 0, 1) == false);
     CHECK(World_Set(0, 0, -1, 1) == false);
-    CHECK(World_Set(48, 0, 0, 1) == false);
-    CHECK(World_Set(0, 48, 0, 1) == false);
+    CHECK(World_Set(kWorldX, 0, 0, 1) == false);
+    CHECK(World_Set(0, kWorldY, 0, 1) == false);
     CHECK(World_Set(0, 0, 8, 1) == false);
 
     /* Nothing leaked through. */

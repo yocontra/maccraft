@@ -837,8 +837,10 @@ static Boolean BlockFillsPlayer(short x, short y, short z)
  * two cannot disagree again. */
 static void SpawnPlayerOnClearGround(void)
 {
-    short sx = 20;
-    short sy = 30;
+    /* The village square is flat and open; start the search there and only
+     * wander if something has been built on it. */
+    short sx = 40;
+    short sy = 46;
     short keep;
 
     /* Walk outwards from the chosen spot until a column has ground and no

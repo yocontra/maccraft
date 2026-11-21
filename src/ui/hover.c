@@ -17,6 +17,7 @@
 #include "hover.h"
 #include "../game/iso.h"
 #include "../game/pick.h"
+#include "../game/pick.h"
 #include "../game/world.h"
 #include "sprite_sheet.h"
 
@@ -34,6 +35,7 @@ static Boolean sHaveQuery = false;
 static short sTileX = 0;
 static short sTileY = 0;
 static short sLevel = 0;
+static short sFace = kPickFaceTop;
 static Rect sDisplay;
 static short sCamX = 0;
 static short sCamY = 0;
@@ -67,6 +69,7 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
     short x = 0;
     short y = 0;
     short surface = 0;
+    short face = kPickFaceTop;
     Boolean valid = false;
     Rect oldBox;
     Rect newBox;
@@ -88,9 +91,9 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
     sHaveQuery = true;
 
     if (PtInRect(local, display)) {
-        valid = Pick_Tile((short)(local.h - display->left),
-                          (short)(local.v - display->top),
-                          camX, camY, &x, &y, &surface);
+        valid = Pick_TileFace((short)(local.h - display->left),
+                              (short)(local.v - display->top),
+                              camX, camY, &x, &y, &surface, &face);
         /* Pick_Tile reports the level a new block would occupy; the wireframe
          * marks the block whose top face was pointed at. */
         surface = (short)(surface - 1);
@@ -120,6 +123,7 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
         sTileX = x;
         sTileY = y;
         sLevel = surface;
+        sFace = face;
 
         if (dirty == NULL) {
             return true;
@@ -146,6 +150,11 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
 Boolean Hover_Valid(void)
 {
     return sValid;
+}
+
+short Hover_Face(void)
+{
+    return sFace;
 }
 
 BlockID Hover_Block(void)
@@ -301,6 +310,29 @@ void Hover_Draw(const Rect *display, short camX, short camY)
         SetRect(&run, (short)(sx + kTileW / 2 - i * 2 - 2), rowY,
                 (short)(sx + kTileW / 2 - i * 2), (short)(rowY + 1));
         Sprite_FillRect(&run, 0x000000UL);
+    }
+
+    /* Lighten the face a block would be placed against, so it is obvious which
+     * side the next block lands on: the same baked face, redrawn in the
+     * brightest shade band. There is no alpha on this display, so a brighter
+     * opaque redraw is the readable version of "highlight". */
+    {
+        BlockID id = Hover_Block();
+
+        if (id != 0) {
+            switch (sFace) {
+            case kPickFaceLeft:
+                Sprite_Draw((short)(sx - kTileW / 2), sy, id, kBlockFaceLeft, 0);
+                break;
+            case kPickFaceRight:
+                Sprite_Draw(sx, sy, id, kBlockFaceRight, 0);
+                break;
+            default:
+                Sprite_Draw((short)(sx - kTileW / 2), (short)(sy - kTileH / 2), id,
+                            kBlockFaceTop, 0);
+                break;
+            }
+        }
     }
 
     /* The three vertical edges at the silhouette corners. */

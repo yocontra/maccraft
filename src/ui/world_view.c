@@ -264,23 +264,22 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
     /* Occlusion comes from the four corners of the face, not one number for the
      * whole quad: a face with a boxed corner is darker than an open one, which
      * is what gives Minecraft its seams where blocks meet. */
+    /* One sun, one direction: the face's sun factor, dimmed a little where
+     * blocks crowd it. The multiplier is deliberately gentle (8 points per
+     * occluder out of 256) so the sun still decides which way the light comes
+     * from -- the earlier per-corner term dimmed a face by up to a fifth and
+     * made the shading depend on its neighbours instead. */
     if (showTop) {
-        short corners[kLightCorners];
-
-        Light_FaceCorners(x, y, z, kLightFaceTop, corners);
-        topShade = Light_Combine(Light_FaceFactor(kLightFaceTop), DarkestCorner(corners));
+        topShade = Light_Combine(Light_FaceFactor(kLightFaceTop),
+                                 Light_Occlusion(x, y, z, kLightFaceTop));
     }
     if (showLeft) {
-        short corners[kLightCorners];
-
-        Light_FaceCorners(x, y, z, kLightFaceLeft, corners);
-        leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft), DarkestCorner(corners));
+        leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft),
+                                  Light_Occlusion(x, y, z, kLightFaceLeft));
     }
     if (showRight) {
-        short corners[kLightCorners];
-
-        Light_FaceCorners(x, y, z, kLightFaceRight, corners);
-        rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight), DarkestCorner(corners));
+        rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight),
+                                   Light_Occlusion(x, y, z, kLightFaceRight));
     }
 
     if (Sprite_Ready()) {

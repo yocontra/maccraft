@@ -3,8 +3,8 @@
 
 #include <Types.h>
 
-#define kWorldX 48
-#define kWorldY 48
+#define kWorldX 96
+#define kWorldY 96
 #define kWorldZ 8
 
 typedef unsigned char BlockID; /* 0 empty, 1 dirt, 2 stone, 3 grass */

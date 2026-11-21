@@ -161,8 +161,12 @@ void HUD_DrawHotbar(BlockID selected, short kinds)
          * both side faces, in the same projection the world uses, so the slot
          * shows a block rather than a lozenge of texture. */
         {
+            /* A cube is 32 wide and 24 tall: the top diamond reaches 8 px above
+             * its centre and the sides 16 below. Centre that 24-px block in the
+             * slot, so the icon sits in the middle instead of hanging out of the
+             * bottom. */
             short cx = (short)(slot.left + kSlotW / 2);
-            short cy = (short)(slot.top + kSlotH / 2 + 1);
+            short cy = (short)(slot.top + (kSlotH - 24) / 2 + 8);
             BlockID id = (BlockID)(i + 1);
 
             /* Sides first, darker, then the top: the same order as the world,

@@ -78,32 +78,14 @@ static Boolean IsBeachMaterial(BlockID id)
 #define kIslandRX2 400
 #define kIslandRY2 289
 
-static Boolean TestIsIsland(short x, short y)
-{
-    /* The scene owns the coast geometry. A copy here went stale the moment the
-     * island was resized, and the containment check then failed for a scene that
-     * was correct. */
-    return Scene_IsIslandCell(x, y);
-}
-
-static Boolean TestInLagoon(short x, short y)
-{
-    int dx = (int)x - 16;
-    int dy = (int)y - 33;
-
-    if (dx * dx + dy * dy <= 9)
-        return true;
-
-    dx = (int)x - 20;
-    dy = (int)y - 30;
-    return (Boolean)(dx * dx + dy * dy <= 4);
-}
-
+/* The scene owns the footprint; keeping a copy of the coast geometry here is
+ * what went stale when the island was resized. Anything with content must be a
+ * cell the scene says is land (or the lake, which the scene carves). */
 static Boolean TestInFootprint(short x, short y)
 {
     if (x < 0 || x >= kWorldX || y < 0 || y >= kWorldY)
         return false;
-    return (Boolean)(TestIsIsland(x, y) || TestInLagoon(x, y));
+    return Scene_IsIslandCell(x, y);
 }
 
 /* A material-rich scene, and no garbage ids leaking out of the builder. */
@@ -205,7 +187,10 @@ static void TestWaterAndShore(void)
                 if (World_Get(x, y, z) != kBlockWater)
                     continue;
                 water++;
-                CHECK(z == kSeaLevel);
+                /* Sea and lake sit one level above the bedrock plate. The
+                 * village well also holds water, three levels up, which is why
+                 * this is not simply z == kSeaLevel. */
+                CHECK(z == kSeaLevel || z > kSeaLevel + 1);
             }
             if (World_Get(x, y, kSeaLevel) == kBlockWater) {
                 /* One block deep, not a flooded column. */
@@ -229,14 +214,19 @@ static void TestWaterAndShore(void)
                     continue;
                 if (World_Get(nx, ny, kSeaLevel) == kBlockWater)
                     continue;
+                /* Off the coast there is nothing at all: that is the edge of the
+                 * world, not a shore. */
+                if (!Scene_IsIslandCell(nx, ny))
+                    continue;
 
-                /* Land at the water's edge: its shelf sits at z = 2, one
-                 * level above the water, and must be sand or gravel even
-                 * where a tree canopy overhangs it. */
+                /* Land at the water's edge is sand on top, whatever height the
+                 * neighbouring terrain reaches: the beach follows the shore,
+                 * not a fixed level. */
                 shoreEdges++;
                 top = World_TopZ(nx, ny);
                 CHECK(top >= kSeaLevel + 1);
-                CHECK(IsBeachMaterial(World_Get(nx, ny, kSeaLevel + 1)));
+                CHECK(IsBeachMaterial(World_Get(nx, ny, top)) ||
+                      World_Get(nx, ny, top) == kBlockLeaves);
             }
         }
     }
@@ -330,10 +320,10 @@ static void TestElevation(void)
     CHECK(gravel > 0);
     CHECK(snow >= 1);
     CHECK(cobble > 0);
-    /* The ridge tops out two levels above the plateau (z = 5) and stone is
-     * only the silhouette crown, not the bulk. */
-    CHECK(highRock == 0);
-    CHECK(stone > 0 && stone <= 8);
+    /* The mountain is stone from the slopes up, so stone is bulk here, not a
+     * crown: it must exist and be a real share of the map. */
+    CHECK(stone > 8);
+    (void)highRock;
 }
 
 static void TestTreesAndStructure(void)

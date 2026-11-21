@@ -34,6 +34,9 @@ Boolean Hover_Valid(void);
 /* The block under the pointer, or 0 when there is none (an empty column). */
 BlockID Hover_Block(void);
 
+/* Which face of the block the pointer is on: kPickFaceTop/Left/Right. */
+short Hover_Face(void);
+
 /* The marked column and level. Only meaningful when Hover_Valid(). */
 void Hover_Tile(short *x, short *y, short *z);
 
