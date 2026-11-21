@@ -161,6 +161,13 @@ static void Sfx_BuildEffects(void)
     Sfx_SetAmp(list, 0, 70);
     Sfx_SetNote(list, 1, 52, 1);
 
+    /* The pond, from nearby: a single quiet low blip, played every couple of
+     * seconds while the player is close to water. */
+    list = &sTemplates[kSfxAmbientWater];
+    list->numCommands = 2;
+    Sfx_SetAmp(list, 0, 45);
+    Sfx_SetNote(list, 1, 31, 2);
+
     /* Stone breaks with a lower, harder pair than grass or dirt. */
     list = &sTemplates[kSfxBreakStone];
     list->numCommands = 3;

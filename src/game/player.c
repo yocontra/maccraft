@@ -126,6 +126,28 @@ static Boolean BoxHits(long x, long y, long z)
 /* Highest block top at or below the feet among the columns the box covers.
  * Returns -1 when there is nothing underneath.  Scanning all z levels (not
  * just the top one) keeps an overhang from hiding the floor below it. */
+Boolean Player_IsNearWater(const Player *p, short tiles)
+{
+    long bx = p->x >> 16;
+    long by = p->y >> 16;
+    long bx0 = (bx - tiles < 0) ? 0 : bx - tiles;
+    long by0 = (by - tiles < 0) ? 0 : by - tiles;
+    long bx1 = (bx + tiles >= kWorldX) ? kWorldX - 1 : bx + tiles;
+    long by1 = (by + tiles >= kWorldY) ? kWorldY - 1 : by + tiles;
+    long x, y, z;
+
+    for (y = by0; y <= by1; y++) {
+        for (x = bx0; x <= bx1; x++) {
+            for (z = 0; z < kWorldZ; z++) {
+                if (World_Get((short)x, (short)y, (short)z) == kBlockWater) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 Boolean Player_InWater(const Player *p)
 {
     return InWater(p->x, p->y, p->z);

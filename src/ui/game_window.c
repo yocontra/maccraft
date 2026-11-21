@@ -909,6 +909,9 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                  !BlockFillsPlayer(placeX, placeY, placeZ) &&
                  World_Set(placeX, placeY, placeZ, (BlockID)(sBlockType + 1))) {
             Sfx_Play(kSfxPlace);
+            /* A small burst of the block's own colour: the placement reads even
+             * where the new block is behind something. */
+            Particles_Spawn(placeX, placeY, placeZ, (BlockID)(sBlockType + 1));
             Hover_Reset();
             sSwingUntil = (unsigned long)TickCount() + 8;
             InvalidateColumn(placeX, placeY, placeZ);
@@ -1831,12 +1834,29 @@ void GameWindow_Idle(void)
             if (!sPlayer.onGround && wasGrounded && sPlayer.vz > 0) {
                 Sfx_Play(kSfxJump);
             }
+            /* Near water: a quiet blip every couple of seconds, so the pond is
+             * audible before you are in it. */
+            {
+                static unsigned long sLastWaterSound = 0;
+                unsigned long now = (unsigned long)TickCount();
+
+                if (Player_IsNearWater(&sPlayer, 3) &&
+                    (unsigned long)(now - sLastWaterSound) > 120) {
+                    sLastWaterSound = now;
+                    Sfx_Play(kSfxAmbientWater);
+                }
+            }
+
             /* Entering water is worth hearing once, not every tick. */
             {
                 Boolean inWater = Player_InWater(&sPlayer);
 
                 if (inWater && !sWasInWater) {
                     Sfx_Play(kSfxSplash);
+                    /* Spray: water-coloured specks where the body broke the
+                     * surface. */
+                    Particles_Spawn((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
+                                    (short)(sPlayer.z >> 16), kBlockWater);
                 }
                 sWasInWater = inWater;
             }
