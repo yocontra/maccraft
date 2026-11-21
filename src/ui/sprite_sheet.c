@@ -221,7 +221,7 @@ static void BakeBand(BlockID id, short face, short shade)
         /* Water is drawn as a checkerboard so the bed shows through: there is no
          * alpha on this display, and a 50 % mask is how a classic Mac draws
          * transparency. */
-        Boolean perforate = (Boolean)(id == kBlockWater);
+        Boolean perforate = (Boolean)(id == kBlockWater || id == kBlockLeaves);
         Ptr mrow = maskBase + (long)row * kMaskRowBytes;
         unsigned long *dst = sBandWords[band] + offset;
         short first = -1;
@@ -251,7 +251,12 @@ static void BakeBand(BlockID id, short face, short shade)
             /* A quarter of the water pixels are left unpainted: with no alpha,
              * a sparse hole pattern reads as depth, while 50 % looked like a
              * screen door. */
-            if (cov[col] && !(perforate && (((col + 2 * row) & 3) == 0))) {
+            /* Water gets a sparse quarter-hole pattern (depth); leaves get a
+             * denser diagonal one, so a tree reads as foliage with sky in it
+             * rather than a solid green blob. */
+            if (cov[col] &&
+                !(id == kBlockWater && (((col + 2 * row) & 3) == 0)) &&
+                !(id == kBlockLeaves && face == 0 && (((col * 3 + row * 5) & 7) == 0))) {
                 mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
                 if (first < 0) {
                     first = col;

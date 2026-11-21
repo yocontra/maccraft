@@ -14,6 +14,7 @@ typedef enum {
     kSfxLand,      /* landing: a low thud */
     kSfxSplash,    /* entering water */
     kSfxBreakStone,/* mining stone: harder and lower than grass */
+    kSfxStepStone, /* a footstep on stone, not soil */
     kSfxCount
 } SfxKind;
 

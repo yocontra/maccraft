@@ -297,8 +297,21 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
             Sprite_Draw(sx, sy, id, kBlockFaceRight, Sprite_ShadeStep(rightShade));
         }
         if (showTop) {
+            short step = Sprite_ShadeStep(topShade);
+
+            /* Water shimmers: alternating between two adjacent shade bands a few
+             * times a second reads as moving water without a second bake or a
+             * second mask. Everything else is static. */
+            if (id == kBlockWater) {
+                short phase = (short)(((unsigned long)TickCount() >> 3) & 1);
+
+                step = (short)(step + phase);
+                if (step >= 4) {
+                    step = 3;
+                }
+            }
             Sprite_Draw((short)(sx - kTileW / 2), (short)(sy - kTileH / 2), id,
-                        kBlockFaceTop, Sprite_ShadeStep(topShade));
+                        kBlockFaceTop, step);
         }
         return;
     }

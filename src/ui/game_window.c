@@ -1814,7 +1814,14 @@ void GameWindow_Idle(void)
             /* A footstep when the tile changes under a walking player, and one
              * when the feet come back down -- so a fall lands audibly too. */
             if ((tileX != wasTileX || tileY != wasTileY) && sPlayer.onGround) {
-                Sfx_Play(kSfxStep);
+                /* The surface decides the sound: stone and brick ring, soil and
+                 * grass thud. Read the block directly under the feet. */
+                BlockID floor = World_Get(tileX, tileY, (short)((sPlayer.z >> 16) - 1));
+                Boolean hard = (Boolean)(floor == kBlockStone || floor == kBlockCobblestone ||
+                                         floor == kBlockBrick || floor == kBlockBedrock ||
+                                         floor == kBlockGlass);
+
+                Sfx_Play(hard ? kSfxStepStone : kSfxStep);
             }
             if (sPlayer.onGround && !wasGrounded) {
                 Sfx_Play(sWasInWater ? kSfxSplash : kSfxLand);

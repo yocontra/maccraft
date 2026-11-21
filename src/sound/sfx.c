@@ -155,6 +155,12 @@ static void Sfx_BuildEffects(void)
     Sfx_SetNote(list, 1, 76, 1);
     Sfx_SetNote(list, 2, 64, 2);
 
+    /* A footstep on stone is a harder tick than on soil. */
+    list = &sTemplates[kSfxStepStone];
+    list->numCommands = 2;
+    Sfx_SetAmp(list, 0, 70);
+    Sfx_SetNote(list, 1, 52, 1);
+
     /* Stone breaks with a lower, harder pair than grass or dirt. */
     list = &sTemplates[kSfxBreakStone];
     list->numCommands = 3;

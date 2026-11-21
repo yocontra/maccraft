@@ -190,7 +190,13 @@ void Hover_Draw(const Rect *display, short camX, short camY)
      * box below, so the strokes are not clipped away. */
     PenNormal();
     PenSize(1, 1);
-    ForeColor(blackColor);
+    /* ForeColor on a direct-colour port maps through the palette and came out
+     * dark red; the wireframe wants actual black. */
+    {
+        RGBColor black = {0, 0, 0};
+
+        RGBForeColor(&black);
+    }
     PenPat(&qd.black);
 
     MoveTo(sx, top);
