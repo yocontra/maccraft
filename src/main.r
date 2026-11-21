@@ -35,6 +35,8 @@ resource 'MENU' (130) {
     {
         "Toggle Block Type", noIcon, "T", noMark, plain;
         "Reset World", noIcon, noKey, noMark, plain;
+        "-", noIcon, noKey, noMark, plain;
+        "Save World", noIcon, noKey, noMark, plain;
     }
 };
 

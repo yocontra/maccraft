@@ -1896,6 +1896,11 @@ void GameWindow_Idle(void)
             else {
                 Rect crackRect;
 
+                /* A tick every few swings, so the hold sounds like progress
+                 * instead of silence followed by a bang. */
+                if ((sBreakTicks % 6) == 0) {
+                    Sfx_Play(kSfxClick);
+                }
                 TileBox(sBreakX, sBreakY, sBreakZ, &crackRect);
                 MarkDirty(&crackRect);
             }

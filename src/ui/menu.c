@@ -122,6 +122,9 @@ void DoMenuCommand(long menuCommand)
                 GameWindow_ToggleBlockType();
                 break;
 
+            case kItemSaveWorld:
+                GameWindow_SaveWorld();
+                break;
             case kItemResetWorld:
                 /* Rebuild the island and put the player back on it: the menu
                  * promised a reset and used to do nothing at all. */
