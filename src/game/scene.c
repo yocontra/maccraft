@@ -194,7 +194,13 @@ static void FillLandColumn(short x, short y, short top)
         /* Stone carries the mountain, dirt the lowlands. */
         World_Set(x, y, z, (BlockID)(top >= 4 ? kBlockStone : kBlockDirt));
     }
-    if (top >= 6) {
+    if (top >= 6 && TerrainHeight((short)(x - 1), y) >= 5 &&
+        TerrainHeight((short)(x + 1), y) >= 5 &&
+        TerrainHeight(x, (short)(y - 1)) >= 5 &&
+        TerrainHeight(x, (short)(y + 1)) >= 5) {
+        /* Snow only where the summit is a summit: a single tall column in a
+         * ragged slope used to get a white cube of its own, which scattered
+         * across the hill like litter. */
         World_Set(x, y, (short)(top - 1), kBlockStone);
         World_Set(x, y, top, kBlockSnow);
     }
