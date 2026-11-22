@@ -1638,6 +1638,20 @@ Boolean GameWindow_PlayerGrounded(void)
     return sPlayer.onGround;
 }
 
+/* Put the player on a tile, feet at the surface, for harness checks. */
+void GameWindow_PlacePlayerForTest(short x, short y, short z)
+{
+    sPlayer.x = ((long)x << 16) + (kPlayerOne / 2);
+    sPlayer.y = ((long)y << 16) + (kPlayerOne / 2);
+    sPlayer.z = (long)z << 16;
+    sPlayer.vx = 0;
+    sPlayer.vy = 0;
+    sPlayer.vz = 0;
+    sPlayer.onGround = false;
+    CentreOnPlayer();
+    MarkDirty(&sDisplayRect);
+}
+
 short GameWindow_PlayerTileX(void)
 {
     return (short)(sPlayer.x >> 16);

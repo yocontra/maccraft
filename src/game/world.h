@@ -5,7 +5,10 @@
 
 #define kWorldX 96
 #define kWorldY 96
-#define kWorldZ 8
+/* Twelve blocks of sky: a hut whose floor sits at 3 needs three courses of
+ * wall and three of roof to look like a house, and eight left no room for the
+ * roof at all -- every hut in the village was a flat plank lid. */
+#define kWorldZ 12
 
 typedef unsigned char BlockID; /* 0 empty, 1 dirt, 2 stone, 3 grass */
 

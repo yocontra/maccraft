@@ -22,7 +22,7 @@ static void TestEmptyBlock(void)
     CHECK(World_Get(-1, 0, 0) == 0);
     CHECK(World_Get(0, 48, 0) == 0);
     CHECK(World_Get(0, -1, 0) == 0);
-    CHECK(World_Get(0, 0, 8) == 0);
+    CHECK(World_Get(0, 0, kWorldZ) == 0);
     CHECK(World_Get(0, 0, -1) == 0);
 }
 
@@ -35,7 +35,7 @@ static void TestSetOutOfRange(void)
     CHECK(World_Set(0, 0, -1, 1) == false);
     CHECK(World_Set(kWorldX, 0, 0, 1) == false);
     CHECK(World_Set(0, kWorldY, 0, 1) == false);
-    CHECK(World_Set(0, 0, 8, 1) == false);
+    CHECK(World_Set(0, 0, kWorldZ, 1) == false);
 
     /* Nothing leaked through. */
     CHECK(World_Get(0, 0, 0) == 0);

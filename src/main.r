@@ -119,6 +119,6 @@ resource 'SIZE' (-1) {
     reserved,
     reserved,
     reserved,
-    768 * 1024,   /* Minimal memory size for world data and rendering */
-    1024 * 1024   /* Preferred memory size with buffer for larger worlds */
+    1536 * 1024,  /* Minimal: a 96x96x12 world is 108K on its own */
+    2048 * 1024   /* Preferred: room for the save staging buffer and the HUD */
 };

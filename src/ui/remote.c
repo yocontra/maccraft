@@ -340,6 +340,35 @@ void Remote_Apply(const char *cmd)
         GameWindow_ToggleBlockType();
         Remote_SetResult("toggle");
     }
+    else if (strncmp(cmd, "goto ", 5) == 0) {
+        /* goto x y [z]: place the player, for harness walks through geometry. */
+        const char *arg = cmd + 5;
+        short vals[3];
+        short n = 0;
+        short sign = 1;
+        long acc = 0;
+        Boolean any = false;
+
+        vals[0] = 0; vals[1] = 0; vals[2] = 0;
+        while (*arg && n < 3) {
+            if (*arg == ' ') {
+                if (any) { vals[n++] = (short)(acc * sign); acc = 0; sign = 1; any = false; }
+                arg++;
+                continue;
+            }
+            if (*arg == '-') { sign = -1; arg++; continue; }
+            if (*arg >= '0' && *arg <= '9') { acc = acc * 10 + (*arg - '0'); any = true; }
+            arg++;
+        }
+        if (any && n < 3) { vals[n++] = (short)(acc * sign); }
+        if (n >= 2) {
+            GameWindow_PlacePlayerForTest(vals[0], vals[1], n >= 3 ? vals[2] : 6);
+            Remote_SetResult("goto");
+        }
+        else {
+            Remote_SetResult("goto needs x y");
+        }
+    }
     else if (strncmp(cmd, "where", 5) == 0) {
         char out[48];
         short q = 0;

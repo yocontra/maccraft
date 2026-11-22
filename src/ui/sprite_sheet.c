@@ -469,21 +469,14 @@ void Sprite_ScrollRect(const Rect *r, short dx, short dy)
             continue;
         }
 
-        /* memmove by hand: the regions can overlap when dx is small. */
-        if (dx > 0) {
-            short i;
-
-            for (i = copyWidth - 1; i >= 0; i--) {
-                ((unsigned long *)dst)[copyX0 + i] = ((unsigned long *)src)[copyX0 + i - dx];
-            }
-        }
-        else {
-            short i;
-
-            for (i = 0; i < copyWidth; i++) {
-                ((unsigned long *)dst)[copyX0 + i] = ((unsigned long *)src)[copyX0 + i - dx];
-            }
-        }
+        /* BlockMoveData is the Toolbox's copy, and it handles overlapping
+         * blocks, so one call per row replaces a hand loop of a hundred and
+         * ninety word moves. This is the whole cost of a pan -- the frame is
+         * 480 thousand pixels and has to move either way -- so it is worth
+         * letting the ROM do it in MOVEM. */
+        BlockMoveData(src + (long)copyX0 * 4 - (long)dx * 4,
+                      dst + (long)copyX0 * 4,
+                      (long)copyWidth * 4);
     }
 }
 

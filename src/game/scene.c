@@ -97,8 +97,11 @@ static short MountHeight(short x, short y)
         return 0;
 
     /* Cone, stepped by the hash so the slopes are not smooth rings. */
-    return (short)(1 + (long)(kMountR - (short)(d2 / kMountR)) * 4 / kMountR +
-                   (Hash2(x, y, 7) & 1));
+    /* Two steps per ring, not four: with a twelve-block world the old cone
+     * built ten-block cliffs, which read as brick walls rather than a hill.
+     * The peak now tops out around seven, which leaves room for the snow cap. */
+    return (short)(1 + (long)(kMountR - (short)(d2 / kMountR)) * 2 / kMountR +
+                   ((Hash2(x / 3, y / 3, 7) & 1) && (d2 % 5) == 0 ? 1 : 0));
 }
 
 static Boolean InLake(short x, short y)
@@ -183,7 +186,7 @@ static void FillLandColumn(short x, short y, short top)
         /* Stone carries the mountain, dirt the lowlands. */
         World_Set(x, y, z, (BlockID)(top >= 4 ? kBlockStone : kBlockDirt));
     }
-    if (top >= 5) {
+    if (top >= 6) {
         World_Set(x, y, (short)(top - 1), kBlockStone);
         World_Set(x, y, top, kBlockSnow);
     }
@@ -230,46 +233,115 @@ static void BuildTerrain(void)
 
 /* ---------------------------------------------------------------- village */
 
-/* A hut shell on any flat plot: plank walls, log corners, glass window, plank
- * gable, brick chimney. `w` and `h` are the inner footprint. */
+/* A hut on a flat plot: cobble sill, three courses of plank wall with log
+ * corners, a two-block doorway with log jambs and a stone step, windows on both
+ * flanks, and a pitched roof that overhangs the walls by a block on every side.
+ *
+ * Two things were wrong with the first version. Its roof was two eaves and a
+ * ridge with the middle courses missing, so every hut had a hole along the top;
+ * and with eight blocks of sky a hut at ground level had exactly one course
+ * left for the roof, which is why they read as flat plank lids. The world is
+ * twelve high now and the roof is a stair of courses, one per row, highest in
+ * the middle. */
 static void BuildHutAt(short x0, short y0, short w, short h, short floorZ)
 {
     short x, y, z;
     short x1 = (short)(x0 + w);
     short y1 = (short)(y0 + h);
+    short midX = (short)(x0 + w / 2);
+    short midY = (short)(y0 + h / 2);
+    short top = (short)(floorZ + 4);        /* walls: floorZ+1 .. floorZ+4 */
+    short roofBase = (short)(floorZ + 5);
 
+    /* Stone sill under the walls, so the hut sits on the ground. */
+    for (x = x0; x <= x1; x++) {
+        for (y = y0; y <= y1; y++) {
+            if (x == x0 || x == x1 || y == y0 || y == y1) {
+                World_Set(x, y, floorZ, kBlockCobblestone);
+            }
+        }
+    }
+
+    /* Walls: planks, with a log at every corner. */
     for (x = x0; x <= x1; x++) {
         for (y = y0; y <= y1; y++) {
             Boolean onX = (Boolean)(x == x0 || x == x1);
             Boolean onY = (Boolean)(y == y0 || y == y1);
 
-            if (!onX && !onY)
+            if (!onX && !onY) {
                 continue;
-            for (z = (short)(floorZ + 1); z <= (short)(floorZ + 2); z++) {
+            }
+            for (z = (short)(floorZ + 1); z <= top; z++) {
                 World_Set(x, y, z, (BlockID)(onX && onY ? kBlockLog : kBlockPlanks));
             }
         }
     }
 
-    /* Doorway on the +y face: that is the face the camera looks at. */
-    World_Set((short)(x0 + w / 2), y1, (short)(floorZ + 1), kBlockEmpty);
-    World_Set((short)(x0 + w / 2), y1, (short)(floorZ + 2), kBlockEmpty);
+    /* Doorway on the +y face -- the face the camera looks at. Two blocks wide
+     * and two tall: a one-wide door exists, but the player's box is 0.6 blocks
+     * and the walk intent is coarse, so the only way through a one-wide gap is
+     * to line up on the exact column, which nobody does. Framed in log with a
+     * stone step outside. */
+    World_Set(midX, y1, (short)(floorZ + 1), kBlockEmpty);
+    World_Set(midX, y1, (short)(floorZ + 2), kBlockEmpty);
+    World_Set((short)(midX + 1), y1, (short)(floorZ + 1), kBlockEmpty);
+    World_Set((short)(midX + 1), y1, (short)(floorZ + 2), kBlockEmpty);
 
-    /* Window on the +x wall. */
-    World_Set(x1, (short)(y0 + h / 2), (short)(floorZ + 2), kBlockGlass);
-
-    /* Gable roof over the footprint. */
-    for (x = x0; x <= x1; x++) {
-        World_Set(x, y0, (short)(floorZ + 3), kBlockPlanks);
-        World_Set(x, y1, (short)(floorZ + 3), kBlockPlanks);
+    if ((short)(midX - 1) > x0) {
+        World_Set((short)(midX - 1), y1, (short)(floorZ + 1), kBlockLog);
+        World_Set((short)(midX - 1), y1, (short)(floorZ + 2), kBlockLog);
     }
-    for (x = x0; x <= x1; x++) {
-        World_Set(x, (short)((y0 + y1) / 2), (short)(floorZ + 4), kBlockPlanks);
+    if ((short)(midX + 2) < x1) {
+        World_Set((short)(midX + 2), y1, (short)(floorZ + 1), kBlockLog);
+        World_Set((short)(midX + 2), y1, (short)(floorZ + 2), kBlockLog);
+    }
+    if ((short)(y1 + 1) < kWorldY) {
+        World_Set(midX, (short)(y1 + 1), floorZ, kBlockCobblestone);
+        World_Set((short)(midX + 1), (short)(y1 + 1), floorZ, kBlockCobblestone);
     }
 
-    /* Chimney at a back corner, two courses above the eaves. */
-    World_Set(x0, y0, (short)(floorZ + 3), kBlockBrick);
-    World_Set(x0, y0, (short)(floorZ + 4), kBlockBrick);
+    /* Windows on both flanks, at eye height. */
+    World_Set(x1, midY, (short)(floorZ + 3), kBlockGlass);
+    World_Set(x0, midY, (short)(floorZ + 3), kBlockGlass);
+
+    /* Pitched roof, one course per row, highest in the middle, ends filled down
+     * to the wall top so the attic is closed. No eave overhang: from this
+     * camera a one-block overhang hangs in front of the walls and the door, and
+     * the hut reads as a plank ramp sitting on the grass. */
+    for (y = y0; y <= y1; y++) {
+        short rise = (short)(y - y0);
+        short fall = (short)(y1 - y);
+        short step = (short)(rise < fall ? rise : fall);
+        short course = (short)(roofBase + step);
+
+        if (course >= kWorldZ) {
+            course = (short)(kWorldZ - 1);
+        }
+        for (x = x0; x <= x1; x++) {
+            if (x < 0 || x >= kWorldX || y < 0 || y >= kWorldY) {
+                continue;
+            }
+            World_Set(x, y, course, kBlockPlanks);
+        }
+        /* Gable ends: close the triangle between the wall top and the roof. */
+        for (z = (short)(top + 1); z < course; z++) {
+            if (x0 >= 0 && x0 < kWorldX) {
+                World_Set(x0, y, z, kBlockPlanks);
+            }
+            if (x1 >= 0 && x1 < kWorldX) {
+                World_Set(x1, y, z, kBlockPlanks);
+            }
+        }
+    }
+
+    /* Chimney on the ridge: brick, two courses above the roof. */
+    {
+        short ridge = (short)(roofBase + (h + 1) / 2);
+
+        for (z = ridge; z < (short)(ridge + 2) && z < kWorldZ; z++) {
+            World_Set((short)(x0 + 1), midY, z, kBlockBrick);
+        }
+    }
 }
 
 /* Plank path across the square, one block wide. */
@@ -323,48 +395,93 @@ static void PutLeaf(short x, short y, short z)
         World_Set(x, y, z, kBlockLeaves);
 }
 
-/* One trunk block with the canopy above it, else the leaves wrap the trunk and
- * the tree reads as a green cube. Three leaf layers: ragged skirt, broad
- * middle, sparse cap. */
+/* An oak: two or three blocks of trunk with the canopy around and above its
+ * top. The first version put one log on the ground and a shell of leaves
+ * straight on top of it, which reads as a green cube sitting in the grass --
+ * there was no trunk to see. Height is clamped: the world is eight blocks deep
+ * and a hilltop tree has less room than a valley one. */
 static void PlantTree(short x, short y, short variant)
 {
+    /* Diamond canopy, radius 2, minus the corners: two full frames. */
+    static const signed char wide[][2] = {
+        {-1, 0}, {0, -1}, {1, 0}, {0, 1},
+        {-2, 0}, {2, 0}, {0, -2}, {0, 2},
+        {-1, -1}, {1, -1}, {-1, 1}, {1, 1},
+        {-2, -1}, {-1, -2}, {1, -2}, {2, -1},
+        {-2, 1}, {-1, 2}, {1, 2}, {2, 1}
+    };
+    /* Skirt: the eight neighbours, one course below the first wide frame. */
     static const signed char skirt[][2] = {
-        {-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, 1}
+        {-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, 1}, {-1, 1}, {1, -1}
     };
-    static const signed char middle[][2] = {
-        {-2, 0}, {-1, -1}, {0, -1}, {1, -1}, {2, 0},
-        {-1, 0}, {0, 0},   {1, 0},  {-1, 1}, {0, 1}, {1, 1}, {0, 2}
-    };
-    static const signed char cap[][2] = {
-        {-1, 0}, {0, -1}, {1, 0}, {0, 0}
-    };
-    short ground, z0, i;
-    int dx, dy;
+    short ground, space, trunk, t0, i, z;
 
     ground = World_TopZ(x, y);
-    if (ground < kSeaLevel + 1 || ground + 4 >= kWorldZ)
+    if (ground < kSeaLevel + 1 || ground + 3 >= kWorldZ) {
         return;
-
-    World_Set(x, y, ground + 1, kBlockLog);
-    z0 = (short)(ground + 2);
-
-    for (i = 0; i < (short)(sizeof skirt / sizeof skirt[0]); i++) {
-        dx = skirt[i][0];
-        dy = skirt[i][1];
-        MirrorOffset(variant, &dx, &dy);
-        PutLeaf((short)(x + dx), (short)(y + dy), z0);
     }
-    for (i = 0; i < (short)(sizeof middle / sizeof middle[0]); i++) {
-        dx = middle[i][0];
-        dy = middle[i][1];
-        MirrorOffset(variant, &dx, &dy);
-        PutLeaf((short)(x + dx), (short)(y + dy), (short)(z0 + 1));
+
+    /* Four blocks of trunk, canopy above that. The player is 1.8 tall, so a
+     * crown that starts two blocks up walls the ground off: you could not walk
+     * under a tree. The lowest leaf course is the fifth block above the ground. */
+    space = (short)(kWorldZ - 1 - ground);
+    if (space < 7) {
+        return;
     }
-    for (i = 0; i < (short)(sizeof cap / sizeof cap[0]); i++) {
-        dx = cap[i][0];
-        dy = cap[i][1];
-        MirrorOffset(variant, &dx, &dy);
-        PutLeaf((short)(x + dx), (short)(y + dy), (short)(z0 + 2));
+    trunk = 4;
+
+    for (z = (short)(ground + 1); z <= (short)(ground + trunk); z++) {
+        World_Set(x, y, z, kBlockLog);
+    }
+    t0 = (short)(ground + trunk + 1);       /* first leaf course above the trunk */
+
+    /* Crown: one wide frame at the trunk top (a radius-two diamond without its
+     * corners), a 3x3 above it, a plus on top. Anything thicker is a hedge: at
+     * three-tile spacing two radius-two crowns overlap and the forest turns
+     * into a green wall with only the tallest trunks poking out. */
+    for (i = 0; i < 12; i++) {
+        int mx = wide[i][0];
+        int my = wide[i][1];
+        short dx, dy;
+
+        MirrorOffset(variant, &mx, &my);
+        dx = (short)mx;
+        dy = (short)my;
+        PutLeaf((short)(x + dx), (short)(y + dy), (short)(ground + trunk));
+    }
+    World_Set(x, y, (short)(ground + trunk), kBlockLog);
+
+    for (i = 0; i < 8; i++) {
+        int mx = skirt[i][0];
+        int my = skirt[i][1];
+        short dx, dy;
+
+        MirrorOffset(variant, &mx, &my);
+        dx = (short)mx;
+        dy = (short)my;
+        PutLeaf((short)(x + dx), (short)(y + dy), t0);
+        PutLeaf((short)(x + dx), (short)(y + dy), (short)(t0 + 1));
+    }
+    World_Set(x, y, t0, kBlockLeaves);
+
+    if ((short)(t0 + 1) < kWorldZ) {
+        for (i = 0; i < 4; i++) {
+            int mx = wide[i][0];
+            int my = wide[i][1];
+            short dx, dy;
+
+            MirrorOffset(variant, &mx, &my);
+            dx = (short)mx;
+            dy = (short)my;
+            PutLeaf((short)(x + dx), (short)(y + dy), (short)(t0 + 1));
+        }
+        World_Set(x, y, (short)(t0 + 1), kBlockLeaves);
+    }
+    if ((short)(t0 + 2) < kWorldZ) {
+        PutLeaf((short)(x - 1), y, (short)(t0 + 2));
+        PutLeaf((short)(x + 1), y, (short)(t0 + 2));
+        PutLeaf(x, (short)(y - 1), (short)(t0 + 2));
+        PutLeaf(x, (short)(y + 1), (short)(t0 + 2));
     }
 }
 
@@ -375,12 +492,12 @@ static void BuildForest(void)
 {
     short x, y;
 
-    for (y = 2; y < (short)(kWorldY - 2); y += 3) {
-        for (x = 2; x < (short)(kWorldX - 2); x += 3) {
+    for (y = 2; y < (short)(kWorldY - 2); y += 5) {
+        for (x = 2; x < (short)(kWorldX - 2); x += 5) {
             short rough = Roughness(x, y);
             short h = TerrainHeight(x, y);
-            short jx = (short)(Hash2(x, y, 3) % 3);
-            short jy = (short)(Hash2(x, y, 5) % 3);
+            short jx = (short)(Hash2(x, y, 3) % 4);
+            short jy = (short)(Hash2(x, y, 5) % 4);
             short tx = (short)(x + jx);
             short ty = (short)(y + jy);
 

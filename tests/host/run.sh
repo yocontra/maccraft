@@ -41,6 +41,7 @@ run_test test_dither "$repo/src/game/dither.c"
 run_test test_light "$repo/src/game/light.c" "$repo/src/game/world.c"
 run_test test_sky "$repo/src/game/sky.c"
 run_test test_scene "$repo/src/game/scene.c" "$repo/src/game/world.c"
+run_test test_scene_walk "$repo/src/game/scene.c" "$repo/src/game/world.c" "$repo/src/game/blocks.c" "$repo/src/game/player.c"
 
 # The texture pipeline: a 64-entry shade-ramp palette and the isometric face
 # baker. Complete and tested, but not wired into the renderer yet -- see
