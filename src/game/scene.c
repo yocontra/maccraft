@@ -362,6 +362,26 @@ static void BuildHutAt(short x0, short y0, short w, short h, short floorZ)
         World_Set((short)(midX + 1), (short)(y1 + 1), floorZ, kBlockCobblestone);
     }
 
+    /* Timber lining on the inner face of the walls, at door height. Without
+     * it the doorway is a hole you can see nothing in: the interior wall
+     * behind it is planks at the same shade as the outside, so the opening
+     * reads as a solid wall. Logs are two ramp steps darker and the doorway
+     * reads as a doorway. */
+    {
+        short inner;
+
+        for (inner = (short)(x0 + 1); inner < x1; inner++) {
+            World_Set(inner, y0, (short)(floorZ + 1), kBlockLog);
+            World_Set(inner, y0, (short)(floorZ + 2), kBlockLog);
+        }
+        for (inner = (short)(y0 + 1); inner < y1; inner++) {
+            World_Set(x0, inner, (short)(floorZ + 1), kBlockLog);
+            World_Set(x0, inner, (short)(floorZ + 2), kBlockLog);
+            World_Set(x1, inner, (short)(floorZ + 1), kBlockLog);
+            World_Set(x1, inner, (short)(floorZ + 2), kBlockLog);
+        }
+    }
+
     /* Windows on both flanks, at eye height. */
     World_Set(x1, midY, (short)(floorZ + 3), kBlockGlass);
     World_Set(x0, midY, (short)(floorZ + 3), kBlockGlass);

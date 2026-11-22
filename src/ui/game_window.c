@@ -134,6 +134,7 @@ static void FlushDirty(void);
 static void GameWindow_Update(void);
 static void GameWindow_Render(void);
 static void SpawnPlayerOnClearGround(void);
+static void DrawPlayerOverlay(void *context);
 
 static long AbsLong(long v)
 {
@@ -1102,6 +1103,25 @@ static void GameWindow_HandleActivate(Boolean becomingActive)
 
 /* Render the game window contents. Only called between BeginUpdate/EndUpdate. */
 
+/* Where the figure landed in the frame last paint. A camera pan scrolls the
+ * whole frame, so the figure's pixels scroll with it and nothing else repaints
+ * them: the old body stays on screen as a ghost, offset by the pan. The pan
+ * path damages this rectangle shifted by the same delta. */
+static Rect sFigureRect;
+static Boolean sFigureValid = false;
+
+/* The player figure, drawn from inside the world traversal (see
+ * WorldView_DrawWithOverlay) so that blocks in front of him cover him. */
+static void DrawPlayerOverlay(void *context)
+{
+    (void)context;
+    PlayerFigureRect(&sFigureRect);
+    sFigureValid = true;
+    Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
+                (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
+                sWalkPhase, (Boolean)!sPlayer.onGround);
+}
+
 static void GameWindow_Render(void)
 {
     Rect strip;
@@ -1242,6 +1262,25 @@ static void GameWindow_Render(void)
                 }
                 sRenderRect = exposed;
             }
+
+            /* The figure scrolled with the frame: repaint where its pixels went,
+             * and where it has to be drawn now. Without this a pan drags a copy
+             * of the player across the view and leaves it there. */
+            if (sFigureValid) {
+                Rect ghost = sFigureRect;
+                Rect now;
+
+                OffsetRect(&ghost, dx, dy);
+                UnionRect(&sRenderRect, &ghost, &sRenderRect);
+                PlayerFigureRect(&now);
+                UnionRect(&sRenderRect, &now, &sRenderRect);
+                if (!SectRect(&sRenderRect, &sDisplayRect, &ghost)) {
+                    SetRect(&sRenderRect, 0, 0, 0, 0);
+                }
+                else {
+                    sRenderRect = ghost;
+                }
+            }
         }
     }
 
@@ -1312,7 +1351,14 @@ static void GameWindow_Render(void)
             view.camX = sCamX;
             view.camY = sCamY;
             view.hasColor = sHasColor;
-            WorldView_Draw(&view, &sRenderRect);
+            /* The player is part of the world, not an overlay on top of it:
+             * handing the figure to the traversal puts it at its own diagonal
+             * in painter order, so the wall in front of a doorway and the
+             * leaves over a head cover it. */
+            WorldView_DrawWithOverlay(&view, &sRenderRect,
+                                      (short)(sPlayer.x >> 16),
+                                      (short)(sPlayer.y >> 16),
+                                      DrawPlayerOverlay, NULL);
         }
         Sprite_SetView(&sDisplayRect);
 
@@ -1329,12 +1375,6 @@ static void GameWindow_Render(void)
             Rect overlay;
             Rect touched;
 
-            PlayerFigureRect(&overlay);
-            if (SectRect(&overlay, &sRenderRect, &touched)) {
-                Avatar_Draw((short)(sPlayer.x >> 16), (short)(sPlayer.y >> 16),
-                            (short)(sPlayer.z >> 16), sCamX, sCamY, &sDisplayRect,
-                            sWalkPhase, (Boolean)!sPlayer.onGround);
-            }
             CrosshairRect(&overlay);
             if (SectRect(&overlay, &sRenderRect, &touched)) {
                 HUD_DrawCrosshair();

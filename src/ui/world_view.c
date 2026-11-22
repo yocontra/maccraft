@@ -339,6 +339,13 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
 
 void WorldView_Draw(const WorldView *v, const Rect *clip)
 {
+    WorldView_DrawWithOverlay(v, clip, 0, 0, NULL, NULL);
+}
+
+void WorldView_DrawWithOverlay(const WorldView *v, const Rect *clip,
+                               short tileX, short tileY,
+                               WorldView_OverlayProc overlay, void *context)
+{
     short xMin, yMin, xMax, yMax, sum, x, y, sumMax, z, top;
     short sumMin, diffMin, diffMax;
     Rect box, hit;
@@ -364,7 +371,18 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
     WorldView_Stats[0] = 0;
     WorldView_Stats[1] = 0;
 
+    /* The overlay belongs after everything at or behind its own diagonal, so
+     * the first sum past it is where it goes. If the walk starts beyond the
+     * player (the view scrolled past him) it is still drawn, in front. */
+    short overlaySum = (short)(tileX + tileY);
+    Boolean overlayDone = (Boolean)(overlay == NULL);
+
     for (sum = sumMin; sum <= sumMax; sum++) {
+        if (!overlayDone && sum > overlaySum) {
+            overlay(context);
+            overlayDone = true;
+        }
+
         /* x - y = 2x - sum, so the diagonal bounds give the on-screen slice of
          * this row; one tile of slack covers the rounding, and the per-column
          * screen test still culls what is left. */
@@ -430,5 +448,9 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
                 }
             }
         }
+    }
+
+    if (!overlayDone) {
+        overlay(context);
     }
 }

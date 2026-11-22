@@ -22,6 +22,16 @@ typedef struct {
  * front. The caller owns the screen lock and the sprite view. */
 extern long WorldView_Stats[2];   /* columns walked, blocks drawn */
 
+/* Drawn *inside* the traversal, once the columns up to its own diagonal have
+ * been painted: that is what puts a player in a doorway behind the wall in
+ * front of him and under a canopy under the leaves, instead of over every
+ * block on screen. `tileX`/`tileY` are the tile the figure stands on. */
+typedef void (*WorldView_OverlayProc)(void *context);
+
+void WorldView_DrawWithOverlay(const WorldView *v, const Rect *clip,
+                               short tileX, short tileY,
+                               WorldView_OverlayProc overlay, void *context);
+
 void WorldView_Draw(const WorldView *v, const Rect *clip);
 
 #endif

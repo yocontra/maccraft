@@ -394,6 +394,45 @@ void Remote_Apply(const char *cmd)
         out[q] = 0;
         Remote_SetResult(out);
     }
+    else if (strncmp(cmd, "block ", 6) == 0) {
+        /* block x y z: the raw world cell, for harness assertions. */
+        const char *arg = cmd + 6;
+        short vals[3];
+        short n = 0;
+        short sign = 1;
+        long acc = 0;
+        Boolean any = false;
+        char out[24];
+        short q = 0;
+        long v;
+
+        vals[0] = 0; vals[1] = 0; vals[2] = 0;
+        while (*arg && n < 3) {
+            if (*arg == ' ') {
+                if (any) { vals[n++] = (short)(acc * sign); acc = 0; sign = 1; any = false; }
+                arg++;
+                continue;
+            }
+            if (*arg == '-') { sign = -1; arg++; continue; }
+            if (*arg >= '0' && *arg <= '9') { acc = acc * 10 + (*arg - '0'); any = true; }
+            arg++;
+        }
+        if (any && n < 3) { vals[n++] = (short)(acc * sign); }
+        if (n < 3) {
+            Remote_SetResult("block needs x y z");
+        }
+        else {
+            short digits[8];
+            short k = 0;
+
+            v = (long)World_Get(vals[0], vals[1], vals[2]);
+            if (v == 0) digits[k++] = 0;
+            while (v > 0 && k < 7) { digits[k++] = (short)(v % 10); v /= 10; }
+            while (k > 0) out[q++] = (char)('0' + digits[--k]);
+            out[q] = 0;
+            Remote_SetResult(out);
+        }
+    }
     else if (strncmp(cmd, "level", 5) == 0) {
         char out[16];
         short q = 0;

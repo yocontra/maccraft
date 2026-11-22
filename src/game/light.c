@@ -14,11 +14,16 @@
    pointing down-left on screen) is lit next; the right face (normal +x,
    pointing down-right) turns away from the sun and is darkest. */
 /* Minecraft's fixed directional shade, which is what makes its blocks read as
- * blocks: the top face gets full light, the two sides get 80% and 60%. The
- * left side is the brighter one because the sun sits up and to the left. */
+ * blocks: the top face gets full light and the two sides are darker. The left
+ * side is the brighter one because the sun sits up and to the left.
+ *
+ * 0.80/0.60 was Minecraft's own ratio and too strong here: at 0.60 a plank wall
+ * and the shadowed inside of a house landed on the same palette step, so a
+ * doorway read as a solid wall. 0.85/0.72 keeps the three faces distinct and
+ * leaves the dark end of the ramp for interiors. */
 #define kSunTop   256 /* 1.00 */
-#define kSunLeft  205 /* 0.80 */
-#define kSunRight 154 /* 0.60 */
+#define kSunLeft  218 /* 0.85 */
+#define kSunRight 184 /* 0.72 */
 
 /* Occlusion is quantised to four levels so faces in the same shadow band
    share a colour; beyond three occluders the face is as dark as it gets. */
