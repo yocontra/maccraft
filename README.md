@@ -7,7 +7,8 @@ grass, sand, water, wood and stone drawn as 32 × 16 isometric tiles, with a
 village of four houses, a forest, a lake and a snow-capped hill. Blocks are
 full cubes — a block of grass is one block of dirt with grass baked into its
 top and its lip — and every face is textured and shaded by direction, with
-ambient occlusion where faces crowd together. It is written in C against the
+ambient occlusion where faces crowd together and a cast shadow from anything
+taller than the ground it stands on. It is written in C against the
 classic Macintosh Toolbox and compiled with
 [Retro68](https://github.com/autc04/Retro68). There is no 3D hardware and no
 68020-only code: everything is integer 2D QuickDraw, so it runs on a Mac Plus

@@ -262,6 +262,31 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
     if (showTop) {
         topShade = Light_Combine(Light_FaceFactor(kLightFaceTop),
                                  Light_Occlusion(x, y, z, kLightFaceTop));
+
+        /* Cast shadow. The sun sits up and to the left, so a column casts down
+         * and to the right: the two cells up-sun of a top face decide whether it
+         * stands in shadow. The near one covers a wall or a bank right beside
+         * it; a crown four blocks up still reaches two cells at this angle,
+         * which is what puts a tree's shadow on the grass instead of a ring of
+         * darkened leaves. */
+        {
+            short nearTop = World_TopZ((short)(x - 1), (short)(y - 1));
+            short farTop  = World_TopZ((short)(x - 2), (short)(y - 2));
+            short cast = 0;
+
+            if (nearTop > z) {
+                cast = 1;
+            }
+            if (nearTop > (short)(z + 3) || farTop > (short)(z + 3)) {
+                cast = 2;
+            }
+            if (cast == 1) {
+                topShade = (short)(topShade - 40);   /* one shade step down */
+            }
+            else if (cast == 2) {
+                topShade = (short)(topShade - 110);  /* two steps: a real patch */
+            }
+        }
     }
     if (showLeft) {
         leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft),

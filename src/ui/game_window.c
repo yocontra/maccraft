@@ -444,11 +444,6 @@ static void DrawCrackOverlay(short x, short y, short z, short ticks)
 
 /* The rectangle the held block occupies, so the swing can repaint just that
  * instead of the whole display. */
-static void HeldBlockRect(Rect *out)
-{
-    SetRect(out, (short)(sDisplayRect.right - 130), (short)(sDisplayRect.bottom - 100),
-            (short)(sDisplayRect.right - 10), (short)(sDisplayRect.bottom - 8));
-}
 
 /* The rectangle the player's figure occupies at its current position. */
 static void PlayerFigureRect(Rect *out)
@@ -1379,10 +1374,6 @@ static void GameWindow_Render(void)
             if (SectRect(&overlay, &sRenderRect, &touched)) {
                 HUD_DrawCrosshair();
             }
-            HeldBlockRect(&overlay);
-            if (SectRect(&overlay, &sRenderRect, &touched)) {
-                HUD_DrawHeld((BlockID)(sBlockType + 1), Swing());
-            }
         }
 
         /* The ring is drawn through the pixel path, so it is not clipped by the
@@ -1586,14 +1577,6 @@ void GameWindow_HandleEvent(EventRecord *event)
         UpdateHover();
         Sprite_Work[0] += (long)((unsigned long)TickCount() - t0);
         Sprite_Work[1]++;
-    }
-    /* Keep the held block's swing animating: nothing else invalidates it, and
-     * only the block's own corner needs repainting. */
-    if (sSwingUntil > (unsigned long)TickCount()) {
-        Rect swingRect;
-
-        HeldBlockRect(&swingRect);
-        MarkDirty(&swingRect);
     }
     FlushDirty();
 }
@@ -1905,11 +1888,9 @@ void GameWindow_Idle(void)
         short wasTileY = (short)(sPlayer.y >> 16);
         short wasZ = (short)(sPlayer.z >> 16);
         Boolean wasGrounded = sPlayer.onGround;
-        Rect oldFigure;
-
-        /* Where the figure is drawn right now: the step is about to move it, and
-         * without damage there too the old drawing stayed behind as a trail. */
-        PlayerFigureRect(&oldFigure);
+        long wasPosX = sPlayer.x;
+        long wasPosY = sPlayer.y;
+        long wasPosZ = sPlayer.z;
 
         if (sLastPhysics == 0) {
             sLastPhysics = now;
@@ -1997,11 +1978,18 @@ void GameWindow_Idle(void)
             if (sCamX != wasCamX || sCamY != wasCamY) {
                 MarkDirty(&sDisplayRect);
             }
-            else if (tileX != wasTileX || tileY != wasTileY ||
-                     (short)(sPlayer.z >> 16) != wasZ) {
+            else if (sPlayer.x != wasPosX || sPlayer.y != wasPosY ||
+                     sPlayer.z != wasPosZ) {
                 Rect figure;
 
-                MarkDirty(&oldFigure);
+                /* Damage where the figure was *drawn*, not where the player was
+                 * a tick ago: between tile boundaries no repaint happens, so the
+                 * drawing can be several ticks behind the simulation, and
+                 * damaging the current rect left a small copy of the player
+                 * standing where he entered the tile. */
+                if (sFigureValid) {
+                    MarkDirty(&sFigureRect);
+                }
                 PlayerFigureRect(&figure);
                 MarkDirty(&figure);
             }
@@ -2074,14 +2062,6 @@ void GameWindow_Idle(void)
         Sprite_Work[1]++;
     }
 
-    /* Keep the held block's swing animating: nothing else invalidates it, and
-     * only the block's own corner needs repainting. */
-    if (sSwingUntil > (unsigned long)TickCount()) {
-        Rect swingRect;
-
-        HeldBlockRect(&swingRect);
-        MarkDirty(&swingRect);
-    }
 
     if (sStripDirty) {
         GrafPtr saved;
