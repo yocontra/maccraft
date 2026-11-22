@@ -12,6 +12,7 @@
 #include "game_window.h"
 #include "hover.h"
 #include "../game/pick.h"
+#include "world_view.h"
 #include "remote.h"
 
 /* What the caller decided, so the receipt can say whether the command was
@@ -77,18 +78,19 @@ void Remote_ReportStats(long paintTicks, long paints, long steps)
      * Every field is decimal, negative allowed. */
     char line[96];
     short i = 0;
-    long values[7];
+    long values[8];
     short v;
 
     values[0] = paintTicks;
     values[1] = paints;
     values[2] = steps;
-    values[3] = Sprite_PaintedPixels;
+    values[3] = WorldView_Stats[0];
     values[4] = Sprite_Phase[0];
     values[5] = Sprite_Phase[1];
     values[6] = Sprite_Phase[2];
+    values[7] = WorldView_Stats[1];
 
-    for (v = 0; v < 7; v++) {
+    for (v = 0; v < 8; v++) {
         char digits[12];
         short n = 0;
         long value = values[v];
@@ -337,6 +339,30 @@ void Remote_Apply(const char *cmd)
         /* Same entry point the Game menu's Toggle Block Type uses. */
         GameWindow_ToggleBlockType();
         Remote_SetResult("toggle");
+    }
+    else if (strncmp(cmd, "where", 5) == 0) {
+        char out[48];
+        short q = 0;
+        long vals[4];
+        short k;
+
+        vals[0] = GameWindow_PlayerTileX();
+        vals[1] = GameWindow_PlayerTileY();
+        vals[2] = GameWindow_PlayerZ();
+        vals[3] = (long)GameWindow_PlayerGrounded();
+        for (k = 0; k < 4; k++) {
+            short digits[12];
+            short n = 0;
+            long v = vals[k];
+
+            if (v < 0) { out[q++] = '-'; v = -v; }
+            if (v == 0) { digits[n++] = 0; }
+            while (v > 0 && n < 11) { digits[n++] = (short)(v % 10); v /= 10; }
+            while (n > 0) { out[q++] = (char)('0' + digits[--n]); }
+            if (k < 3) { out[q++] = ' '; }
+        }
+        out[q] = 0;
+        Remote_SetResult(out);
     }
     else if (strncmp(cmd, "stats", 5) == 0) {
         Remote_ReportStats(Sprite_Work[2], Sprite_Work[3], Sprite_Work[5]);

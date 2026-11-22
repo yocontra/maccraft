@@ -19,6 +19,8 @@
 
 
 /* The palette module's colour into the QuickDraw one. */
+long WorldView_Stats[2];   /* columns walked, blocks drawn */
+
 static RGBColor FromBlockColor(BlockColor c)
 {
     RGBColor result;
@@ -181,54 +183,39 @@ static void UnprojectClamped(const WorldView *v, short px, short py, short *outX
 }
 
 
+/*
+ * The tiles that can appear in a view, computed from the projection rather than
+ * from clamped corner unprojections.
+ *
+ *   screenX  = (x - y) * 16 + camX   ->  x - y = (screenX - camX) / 16
+ *   screenY  = (x + y) *  8 + camY   ->  x + y = (screenY - camY) /  8
+ *
+ * So the view rectangle bounds the diagonal term from its left and right edges
+ * and the sum from its top and bottom, exactly. A column up to kWorldZ levels
+ * tall draws its top that many tile-sums above its ground, which is what the
+ * sum lower bound allows for. Clamping to the world happens per tile in the
+ * traversal, not here: clamping first is what turned the diagonal bounds into
+ * +-world and made the walk six times the visible tiles.
+ */
 static void ComputeVisibleRange(const WorldView *v, const Rect *view, short *xMin,
-                                short *yMin, short *xMax, short *yMax)
+                                short *yMin, short *xMax, short *yMax,
+                                short *sumMin, short *sumMax,
+                                short *diffMin, short *diffMax)
 {
-    short left, top, right, bottom, x, y;
+    short left   = (short)(view->left - v->display.left);
+    short top    = (short)(view->top - v->display.top);
+    short right  = (short)(view->right - v->display.left);
+    short bottom = (short)(view->bottom - v->display.top);
 
-    left   = (short)(view->left - v->display.left);
-    top    = (short)(view->top - v->display.top);
-    right  = (short)(view->right - v->display.left);
-    bottom = (short)(view->bottom - v->display.top);
+    *sumMin  = (short)(((int)top - (int)v->camY) / (kTileH / 2) - kWorldZ - 2);
+    *sumMax  = (short)(((int)bottom - (int)v->camY) / (kTileH / 2) + 2);
+    *diffMin = (short)(((int)left - (int)v->camX) / (kTileW / 2) - 2);
+    *diffMax = (short)(((int)right - (int)v->camX) / (kTileW / 2) + 2);
 
-    UnprojectClamped(v, left, top, xMin, yMin);
-    *xMax = *xMin;
-    *yMax = *yMin;
-
-    UnprojectClamped(v, right, top, &x, &y);
-    if (x < *xMin) *xMin = x;
-    if (x > *xMax) *xMax = x;
-    if (y < *yMin) *yMin = y;
-    if (y > *yMax) *yMax = y;
-
-    UnprojectClamped(v, left, bottom, &x, &y);
-    if (x < *xMin) *xMin = x;
-    if (x > *xMax) *xMax = x;
-    if (y < *yMin) *yMin = y;
-    if (y > *yMax) *yMax = y;
-
-    UnprojectClamped(v, right, bottom, &x, &y);
-    if (x < *xMin) *xMin = x;
-    if (x > *xMax) *xMax = x;
-    if (y < *yMin) *yMin = y;
-    if (y > *yMax) *yMax = y;
-
-    /* Far side: a column one tile past the clip corner can still have its top
-     * diamond poke into the clip, so one tile of slack (two for safety). Near
-     * side: a column up to kWorldZ levels tall draws its top up to
-     * kWorldZ * kTileH/2 pixels above its own ground, which is kWorldZ more
-     * tile-sums, so the near edges need that much more room. The screen-box
-     * test in the traversal makes an over-wide range harmless (it costs an
-     * iteration, not a face), while an under-wide one would clip geometry. */
-    *xMin -= 2;
-    *yMin -= 2;
-    *xMax += kWorldZ + 2;
-    *yMax += kWorldZ + 2;
-
-    if (*xMin < 0) *xMin = 0;
-    if (*yMin < 0) *yMin = 0;
-    if (*xMax >= kWorldX) *xMax = kWorldX - 1;
-    if (*yMax >= kWorldY) *yMax = kWorldY - 1;
+    *xMin = 0;
+    *yMin = 0;
+    *xMax = (short)(kWorldX - 1);
+    *yMax = (short)(kWorldY - 1);
 }
 
 
@@ -350,9 +337,12 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
 void WorldView_Draw(const WorldView *v, const Rect *clip)
 {
     short xMin, yMin, xMax, yMax, sum, x, y, sumMax, z, top;
+    short sumMin, diffMin, diffMax;
     Rect box, hit;
 
-    ComputeVisibleRange(v, clip, &xMin, &yMin, &xMax, &yMax);
+    (void)xMin; (void)yMin; (void)xMax; (void)yMax;
+    ComputeVisibleRange(v, clip, &xMin, &yMin, &xMax, &yMax,
+                        &sumMin, &sumMax, &diffMin, &diffMax);
 
     sumMax = (short)(xMax + yMax);
 
@@ -368,12 +358,30 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
      * columns used to pay for its lighting and a sprite call that trimmed to
      * nothing. The column's own screen box is the exact test, so it runs before
      * any lighting or blitting and rejects them for the cost of one SectRect. */
-    for (sum = (short)(xMin + yMin); sum <= sumMax; sum++) {
-        for (x = xMin; x <= xMax; x++) {
+    WorldView_Stats[0] = 0;
+    WorldView_Stats[1] = 0;
+
+    for (sum = sumMin; sum <= sumMax; sum++) {
+        /* x - y = 2x - sum, so the diagonal bounds give the on-screen slice of
+         * this row; one tile of slack covers the rounding, and the per-column
+         * screen test still culls what is left. */
+        short lo = (short)((sum + diffMin) / 2 - 1);
+        short hi = (short)((sum + diffMax) / 2 + 1);
+
+        if (lo < 0) {
+            lo = 0;
+        }
+        if (hi > (short)(kWorldX - 1)) {
+            hi = (short)(kWorldX - 1);
+        }
+
+        for (x = lo; x <= hi; x++) {
             short sx, sy0;
 
+            WorldView_Stats[0]++;
+
             y = (short)(sum - x);
-            if (y < yMin || y > yMax) {
+            if (y < 0 || y >= kWorldY) {
                 continue;
             }
 

@@ -350,6 +350,43 @@ static void TestSwimming(void)
     CHECK(p.z == kPlayerOne);
 }
 
+/*
+ * 4e. Out of the water. The pond bed is a block below the shore, so climbing
+ * out is a one-block step -- and the step-up rule only ran for a grounded
+ * player, which a swimmer never is. You could get in and not out.
+ */
+static void TestClimbOutOfWater(void)
+{
+    Player p;
+    int i;
+    short x, y;
+
+    ClearWorld();
+    /* One block of water at z=1 over bedrock, with dry land from x=30. */
+    for (x = 20; x < 30; x++)
+        for (y = 20; y < 30; y++) {
+            World_Set(x, y, 0, kBlockBedrock);
+            World_Set(x, y, 1, kBlockWater);
+        }
+    for (x = 30; x < 40; x++)
+        for (y = 20; y < 30; y++) {
+            World_Set(x, y, 0, kBlockDirt);
+            World_Set(x, y, 1, kBlockGrass);
+        }
+
+    Player_Spawn(&p, 24, 25, 2);
+    for (i = 0; i < 30; i++)
+        Player_Step(&p, 0, 0, false);
+
+    for (i = 0; i < 120; i++)
+        Player_Step(&p, 1, 0, false);
+
+    /* Out of the pond and standing on the shore: one block up, on ground. */
+    CHECK(p.x > 30 * kPlayerOne);
+    CHECK(p.z == 2 * kPlayerOne);
+    CHECK(p.onGround);
+}
+
 /* 5. A two-block wall stops the player at its face while staying grounded. */
 static void TestWalls(void)
 {
@@ -486,6 +523,7 @@ int main(void)
     TestWalkUpStep();
     TestJumpGrace();
     TestSwimming();
+    TestClimbOutOfWater();
     TestWalls();
     TestFallingOff();
     TestNoTunnelling();

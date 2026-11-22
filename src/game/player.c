@@ -330,8 +330,11 @@ static void SolveX(Player *p)
             continue;
         }
 
-        /* Blocked at this height: a grounded player steps up one block. */
-        if (p->onGround && TryStepUp(nx, p->y, p->z)) {
+        /* Blocked at this height: a grounded player steps up one block. In
+         * water the same rule applies, because the pond bed is a block below
+         * the shore -- without it you could swim but never climb out. */
+        if ((p->onGround || InWater(p->x, p->y, p->z)) &&
+            TryStepUp(nx, p->y, p->z)) {
             p->z = p->z + kPlayerOne;
             p->x = nx;
             remaining -= step;
@@ -366,7 +369,8 @@ static void SolveY(Player *p)
 
         /* Same rule on the other axis, so a step is climbable whichever way it
          * faces. */
-        if (p->onGround && TryStepUp(p->x, ny, p->z)) {
+        if ((p->onGround || InWater(p->x, p->y, p->z)) &&
+            TryStepUp(p->x, ny, p->z)) {
             p->z = p->z + kPlayerOne;
             p->y = ny;
             remaining -= step;

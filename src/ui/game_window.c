@@ -135,6 +135,11 @@ static void GameWindow_Update(void);
 static void GameWindow_Render(void);
 static void SpawnPlayerOnClearGround(void);
 
+static long AbsLong(long v)
+{
+    return (v < 0) ? -v : v;
+}
+
 /* Filled polygons take their colour from the *pen pattern*, so a plain
  * 1-bit pattern can only ever be a shade of grey: PaintPoly with qd.white
  * yields white and RGBForeColor is ignored. MakeRGBPat builds a pattern that
@@ -493,8 +498,40 @@ static void CentreOnPlayer(void)
         short targetX = (short)((sDisplayRect.right - sDisplayRect.left) / 2);
         short targetY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2 + kTileH);
 
-        sCamX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
-        sCamY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+        /* One axis at a time. A diagonal pan uncovers an L, and one rectangle
+         * cannot describe an L -- the paint would have to recompose the whole
+         * view. Moving x on one tick and y on the next keeps every pan a single
+         * band, and the scroll path already repaints a band cheaply. */
+        {
+            short wantX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
+            short wantY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+            long stepX = (long)wantX - (long)sCamX;
+            long stepY = (long)wantY - (long)sCamY;
+
+            if (stepX != 0 && stepY != 0) {
+                if (AbsLong(stepX) >= AbsLong(stepY)) {
+                    stepY = 0;
+                }
+                else {
+                    stepX = 0;
+                }
+            }
+            /* Keep the step inside the view: the pan path can only scroll by
+             * less than a display, and a bigger step would recompose the whole
+             * play area. A long jump (a respawn, a teleport) then converges over
+             * a couple of frames as bands instead of one full repaint. */
+            {
+                short halfW = (short)((sDisplayRect.right - sDisplayRect.left) / 2);
+                short halfH = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2);
+
+                if (stepX > halfW) stepX = halfW;
+                if (stepX < -halfW) stepX = -halfW;
+                if (stepY > halfH) stepY = halfH;
+                if (stepY < -halfH) stepY = -halfH;
+            }
+            sCamX = (short)(sCamX + stepX);
+            sCamY = (short)(sCamY + stepY);
+        }
         MarkDirty(&sDisplayRect);
     }
 }

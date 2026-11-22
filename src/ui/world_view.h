@@ -20,6 +20,8 @@ typedef struct {
 
 /* Draw every block whose tiles overlap `clip` (in window coordinates), back to
  * front. The caller owns the screen lock and the sprite view. */
+extern long WorldView_Stats[2];   /* columns walked, blocks drawn */
+
 void WorldView_Draw(const WorldView *v, const Rect *clip);
 
 #endif
