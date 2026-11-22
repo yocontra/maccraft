@@ -323,9 +323,24 @@ Boolean Sprite_Init(void)
     return true;
 }
 
+/* True only while the direct 32-bit writer is safe. The depth is re-checked on
+ * every call, not just at init: the guest can change screen mode under us -- a
+ * screen saver, a resolution change -- and stepping four bytes per pixel
+ * through a narrower buffer turns the display into a kaleidoscope of the
+ * framebuffer written past the end of each row. When this says no, every caller
+ * already has a QuickDraw path to fall back on. */
 Boolean Sprite_Ready(void)
 {
-    return sReady;
+    GDHandle gd;
+
+    if (!sReady) {
+        return false;
+    }
+    gd = GetMainDevice();
+    if (gd == NULL || (*gd)->gdPMap == NULL) {
+        return false;
+    }
+    return (Boolean)((*(*gd)->gdPMap)->pixelSize == 32);
 }
 
 /* Cached screen state for the duration of a frame. Locking the device PixMap
@@ -736,6 +751,7 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
         }
         line = (unsigned long *)rowBase + x0;
         s += (x0 - originX) - first;
+
         /* The run is contiguous and the source is never the destination, so
          * the ROM's own move can take the row.  Measured on the guest, three
          * alternating pairs in one session (field 6 of the stats receipt, full
@@ -751,5 +767,19 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
          * clear, and a block move would paint them. */
         BlockMoveData((Ptr)s, (Ptr)line,
                       (unsigned long)(x1 - x0) * sizeof(unsigned long));
+
+        /* Top faces carry their own edge one pixel outwards. Adjacent diamonds
+         * meet on a diagonal and the rasterised edges leave a one-pixel gap; the
+         * gap shows the top of the block below -- dirt under grass -- which read
+         * as a brown crack zigzagging across every flat run of ground. The
+         * overlap lands under the neighbour drawn next, so it is invisible. */
+        if (face == kBlockFaceTop) {
+            if (x0 > viewLeft && x0 > 0) {
+                line[-1] = s[0];
+            }
+            if (x1 < viewRight && x1 < sScreenWidth) {
+                line[x1 - x0] = s[x1 - x0 - 1];
+            }
+        }
     }
 }
