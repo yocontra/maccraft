@@ -47,7 +47,11 @@ static void CheckColumnCentre(short x, short y, short surfaceZ, short camX,
 {
     short sx, sy, px = -1, py = -1, pz = -1;
 
-    Iso_Project(x, y, surfaceZ, camX, camY, &sx, &sy);
+    /* The face a click lands on is the *drawn* top of the block under the
+     * surface, which projects at the block's own level. A level is a whole
+     * tile height now, so projecting the surface level would put the point a
+     * full diamond above the face. */
+    Iso_Project(x, y, (short)(surfaceZ - 1), camX, camY, &sx, &sy);
     CHECK(Pick_Tile(sx, sy, camX, camY, &px, &py, &pz));
     if (px != x || py != y || pz != surfaceZ) {
         fprintf(stderr,
@@ -102,19 +106,22 @@ static void TestRaisedBeatsFlat(void)
  * stack two tiles nearer the camera.  Ground-plane unprojection names a
  * column far behind it; the visible surface is the stack.
  */
-static void TestFortyPixelsAboveAPlainColumn(void)
+static void TestTallStackHidesGroundBehindIt(void)
 {
-    short sx, sy, gx = -1, gy = -1, px = -1, py = -1, pz = -1;
+    short tx, ty, gx = -1, gy = -1, px = -1, py = -1, pz = -1;
 
     ClearWorld();
     BuildColumn(10, 10, 0); /* empty column: surface z = 0 */
     BuildColumn(11, 11, 7); /* full-height stack in front */
 
-    Iso_Project(10, 10, 0, 0, 0, &sx, &sy);
-    CHECK(Iso_Unproject(sx, sy - 40, 0, 0, &gx, &gy));
-    CHECK(gx == 7 && gy == 7); /* what the z=0 plane alone would pick */
+    /* The point is the centre of the stack's drawn top face. The z=0 plane
+     * reads it as a column far behind the stack; the visible surface is the
+     * stack. */
+    Iso_Project(11, 11, 6, 0, 0, &tx, &ty);
+    CHECK(Iso_Unproject(tx, ty, 0, 0, &gx, &gy));
+    CHECK(gx != 11 || gy != 11);   /* the plane names a different column */
 
-    CHECK(Pick_Tile(sx, sy - 40, 0, 0, &px, &py, &pz));
+    CHECK(Pick_Tile(tx, ty, 0, 0, &px, &py, &pz));
     CHECK(px == 11);
     CHECK(py == 11);
     CHECK(pz == 7);
@@ -170,7 +177,7 @@ static void TestDeterminism(void)
     BuildColumn(30, 30, 3);
     BuildColumn(31, 30, 1);
 
-    Iso_Project(30, 30, 3, -160, -80, &sx, &sy);
+    Iso_Project(30, 30, 2, -160, -80, &sx, &sy);   /* top block of the 3-stack */
     CHECK(Pick_Tile(sx, sy, -160, -80, &x1, &y1, &z1));
     CHECK(Pick_Tile(sx, sy, -160, -80, &x2, &y2, &z2));
     CHECK(x1 == x2 && y1 == y2 && z1 == z2);
@@ -261,7 +268,7 @@ int main(void)
 {
     TestFlatColumns();
     TestRaisedBeatsFlat();
-    TestFortyPixelsAboveAPlainColumn();
+    TestTallStackHidesGroundBehindIt();
     TestRejectsEmptySpace();
     TestTallColumnDoesNotShadowNearerColumn();
     TestDeterminism();

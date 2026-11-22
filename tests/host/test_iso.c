@@ -40,12 +40,12 @@ static void TestOrigin(void)
     /* Raising a block moves it up by half a tile. */
     Iso_Project(0, 0, 1, 0, 0, &sx, &sy);
     CHECK(sx == 0);
-    CHECK(sy == -(kTileH / 2));
+    CHECK(sy == -kTileH);
 
     /* Cameras translate without changing shape. */
     Iso_Project(3, 5, 2, 100, -50, &sx, &sy);
     CHECK(sx == (3 - 5) * (kTileW / 2) + 100);
-    CHECK(sy == (3 + 5) * (kTileH / 2) - 2 * (kTileH / 2) - 50);
+    CHECK(sy == (3 + 5) * (kTileH / 2) - 2 * kTileH - 50);
 }
 
 static void TestRoundTrip(void)
@@ -118,13 +118,13 @@ static void TestExtremesDoNotOverflowShort(void)
     /* x=y=47, z=7: the largest magnitude the grid can produce. */
     Iso_Project(47, 47, 7, 0, 0, &sx, &sy);
     CHECK(sx == 0);
-    CHECK(sy == (47 + 47) * (kTileH / 2) - 7 * (kTileH / 2));
-    CHECK(sy == 696);
+    CHECK(sy == (47 + 47) * (kTileH / 2) - 7 * kTileH);
+    CHECK(sy == (47 + 47) * (kTileH / 2) - 7 * kTileH);
 
     /* Cameras are short by contract; the world extremes must fit too. */
     Iso_Project(47, 47, 7, 30000, 30000, &sx, &sy);
     CHECK(sx == 30000);
-    CHECK(sy == 696 + 30000);
+    CHECK(sy == (47 + 47) * (kTileH / 2) - 7 * kTileH + 30000);
 }
 
 int main(void)

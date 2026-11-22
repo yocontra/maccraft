@@ -12,6 +12,7 @@
 #include "game_window.h"
 #include "hover.h"
 #include "../game/pick.h"
+#include "../game/iso.h"
 #include "world_view.h"
 #include "remote.h"
 
@@ -390,6 +391,18 @@ void Remote_Apply(const char *cmd)
             while (n > 0) { out[q++] = (char)('0' + digits[--n]); }
             if (k < 3) { out[q++] = ' '; }
         }
+        out[q] = 0;
+        Remote_SetResult(out);
+    }
+    else if (strncmp(cmd, "level", 5) == 0) {
+        char out[16];
+        short q = 0;
+        short digits[6];
+        short n = 0;
+        long v = kTileH;
+        if (v == 0) digits[n++] = 0;
+        while (v > 0 && n < 5) { digits[n++] = (short)(v % 10); v /= 10; }
+        while (n > 0) out[q++] = (char)('0' + digits[--n]);
         out[q] = 0;
         Remote_SetResult(out);
     }

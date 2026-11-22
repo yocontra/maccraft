@@ -25,7 +25,9 @@
 #include "iso.h"
 #include "world.h"
 
-#define kPickWindow (kWorldZ + 1)
+/* A surface kWorldZ levels up projects kWorldZ * kTileH pixels higher, which is
+ * 2 * kWorldZ tile-sums, so the search window must span that far. */
+#define kPickWindow (2 * kWorldZ + 1)
 
 /*
  * A tile's top face is a diamond kTileW wide and kTileH tall, so a point is

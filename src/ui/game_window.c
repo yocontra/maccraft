@@ -260,7 +260,7 @@ void GameWindow_Initialize(void)
         sCamX = (short)((sDisplayRect.right - sDisplayRect.left) / 2 -
                         (px - py) * (kTileW / 2));
         sCamY = (short)((sDisplayRect.bottom - sDisplayRect.top) / 2 -
-                        ((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+                        ((px + py) * (kTileH / 2) - pz * kTileH));
     }
     Sfx_Init();
 
@@ -504,7 +504,7 @@ static void CentreOnPlayer(void)
          * band, and the scroll path already repaints a band cheaply. */
         {
             short wantX = (short)(targetX - (short)((px - py) * (kTileW / 2)));
-            short wantY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * (kTileH / 2)));
+            short wantY = (short)(targetY - (short)((px + py) * (kTileH / 2) - pz * kTileH));
             long stepX = (long)wantX - (long)sCamX;
             long stepY = (long)wantY - (long)sCamY;
 

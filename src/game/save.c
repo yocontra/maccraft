@@ -23,7 +23,11 @@
 #define kSaveMagic1 'C'
 #define kSaveMagic2 'W'
 #define kSaveMagic3 'F'
-#define kSaveVersion 1
+/* Bumped whenever the scene or the block layout changes meaning: a save from an
+ * older build holds a world that no longer matches the generator (one-block
+ * trunks, huts without doorways), and resuming it made every fixed bug look
+ * unfixed on the guest. */
+#define kSaveVersion 4
 
 static const unsigned char kSaveName[] = "\pMacCraft World";
 

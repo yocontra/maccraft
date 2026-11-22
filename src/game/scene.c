@@ -131,6 +131,14 @@ static short TerrainHeight(short x, short y)
     h = (short)(2 + (rough > 150 ? 1 : 0) + (rough > 210 ? 1 : 0));
     h = (short)(h + MountHeight(x, y));
 
+    /* The lowland is one level. The noise steps the ground by a block every few
+     * tiles, and every such step is a lone pillar or pit whose shaded sides
+     * scatter across the grass as brown chevrons. A flat basin with real hills
+     * only on the mountain reads far better and is what the reference does. */
+    if (h > 0 && h <= 4) {
+        h = 3;
+    }
+
     /* Flatten the village plot: a village on a slope reads as rubble. */
     {
         long dx = (long)x - kVillageCX;
@@ -199,13 +207,67 @@ static void FillLandColumn(short x, short y, short top)
             World_Set(x, y, top, kBlockSand);
         }
     }
-    else if (top == 4 && (Hash2(x, y, 23) & 3) == 0) {
-        /* Slopes of the mountain are bare dirt where the grass gives out. */
+    else if (top >= 5 && (Hash2(x, y, 23) & 3) == 0) {
+        /* Bare dirt only where the ground climbs to the mountain, so the
+         * lowland keeps its grass. It used to fire on the flat plain too, which
+         * scattered brown squares with nothing above them among the green. */
         World_Set(x, y, top, kBlockDirt);
     }
     else {
         World_Set(x, y, top, kBlockGrass);
     }
+}
+
+/* Terrain height with isolated single columns removed.
+ *
+ * The noise thresholds are smooth, but where a hill crosses one, a lone column
+ * ends up a block above or below every neighbour. In a cube renderer that is a
+ * one-tile pillar or pit, and its shaded sides read as a scatter of brown
+ * chevrons across flat grass. A column that is higher (or lower) than all four
+ * neighbours by the same amount is flattened into them. */
+static short SmoothedHeight(short x, short y)
+{
+    short h = TerrainHeight(x, y);
+    short n[4];
+    short i;
+    short higher = 1;
+    short lower = 1;
+
+    if (h < 0) {
+        return h;
+    }
+    n[0] = TerrainHeight((short)(x - 1), y);
+    n[1] = TerrainHeight((short)(x + 1), y);
+    n[2] = TerrainHeight(x, (short)(y - 1));
+    n[3] = TerrainHeight(x, (short)(y + 1));
+
+    for (i = 0; i < 4; i++) {
+        if (n[i] >= h) {
+            higher = 0;
+        }
+        if (n[i] <= h) {
+            lower = 0;
+        }
+    }
+    if (higher) {
+        short m = n[0];
+        for (i = 1; i < 4; i++) {
+            if (n[i] > m) {
+                m = n[i];
+            }
+        }
+        return m;
+    }
+    if (lower) {
+        short m = n[0];
+        for (i = 1; i < 4; i++) {
+            if (n[i] < m) {
+                m = n[i];
+            }
+        }
+        return (short)(m < 0 ? h : m);
+    }
+    return h;
 }
 
 static void BuildTerrain(void)
@@ -216,7 +278,7 @@ static void BuildTerrain(void)
         for (y = 0; y < kWorldY; y++) {
             if (!IsSceneCell(x, y))
                 continue;
-            top = TerrainHeight(x, y);
+            top = SmoothedHeight(x, y);
             if (top < 0) {
                 /* Water sits on the bedrock plate, like every other column: the
                  * bed of the lake and the sea is rock, not sand. */
@@ -435,10 +497,11 @@ static void PlantTree(short x, short y, short variant)
     }
     t0 = (short)(ground + trunk + 1);       /* first leaf course above the trunk */
 
-    /* Crown: one wide frame at the trunk top (a radius-two diamond without its
-     * corners), a 3x3 above it, a plus on top. Anything thicker is a hedge: at
-     * three-tile spacing two radius-two crowns overlap and the forest turns
-     * into a green wall with only the tallest trunks poking out. */
+    /* Crown entirely *above* the trunk: a ring at the first course over the
+     * bark, a 3x3 above that, a plus on top. A ring wrapped around the trunk's
+     * own top course was the reason no tree had a trunk to see: each leaf
+     * block's side face is 24 pixels tall, so a ring at the bark's level hung
+     * down over three quarters of it and the tree read as a green cube. */
     for (i = 0; i < 12; i++) {
         int mx = wide[i][0];
         int my = wide[i][1];
@@ -447,27 +510,14 @@ static void PlantTree(short x, short y, short variant)
         MirrorOffset(variant, &mx, &my);
         dx = (short)mx;
         dy = (short)my;
-        PutLeaf((short)(x + dx), (short)(y + dy), (short)(ground + trunk));
-    }
-    World_Set(x, y, (short)(ground + trunk), kBlockLog);
-
-    for (i = 0; i < 8; i++) {
-        int mx = skirt[i][0];
-        int my = skirt[i][1];
-        short dx, dy;
-
-        MirrorOffset(variant, &mx, &my);
-        dx = (short)mx;
-        dy = (short)my;
         PutLeaf((short)(x + dx), (short)(y + dy), t0);
-        PutLeaf((short)(x + dx), (short)(y + dy), (short)(t0 + 1));
     }
     World_Set(x, y, t0, kBlockLeaves);
 
     if ((short)(t0 + 1) < kWorldZ) {
-        for (i = 0; i < 4; i++) {
-            int mx = wide[i][0];
-            int my = wide[i][1];
+        for (i = 0; i < 8; i++) {
+            int mx = skirt[i][0];
+            int my = skirt[i][1];
             short dx, dy;
 
             MirrorOffset(variant, &mx, &my);
@@ -477,11 +527,13 @@ static void PlantTree(short x, short y, short variant)
         }
         World_Set(x, y, (short)(t0 + 1), kBlockLeaves);
     }
+
     if ((short)(t0 + 2) < kWorldZ) {
         PutLeaf((short)(x - 1), y, (short)(t0 + 2));
         PutLeaf((short)(x + 1), y, (short)(t0 + 2));
         PutLeaf(x, (short)(y - 1), (short)(t0 + 2));
         PutLeaf(x, (short)(y + 1), (short)(t0 + 2));
+        World_Set(x, y, (short)(t0 + 2), kBlockLeaves);
     }
 }
 

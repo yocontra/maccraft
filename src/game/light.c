@@ -25,8 +25,14 @@
 /* Minecraft's smooth lighting dims a face by at most about a fifth: a corner
  * tucked against two other blocks is darker, never black. A 32-per-occluder
  * step took a side face from 0.6 to 0.3 once the sun factor was applied on top,
- * which is why every cut edge of the island rendered as a black rim. */
-#define kOccluderStep 8
+ * which is why every cut edge of the island rendered as a black rim.
+ *
+ * Nor is eight enough: the four shade steps sit at 231, 180 and 128, so eight
+ * points per occluder could not move a face from one step to the next and the
+ * whole occlusion pass was invisible -- no shadow where a wall meets the
+ * ground, none under a canopy. Twenty crosses a step at two occluders and
+ * lands a fully tucked corner two steps down, which is a fifth at worst. */
+#define kOccluderStep 20
 #define kMaxOccluders 3
 
 static short SolidAt(short x, short y, short z)

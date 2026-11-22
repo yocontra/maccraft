@@ -774,6 +774,11 @@ void Sprite_DrawScaled(short left, short top, BlockID id, short face, short shad
          * as a brown crack zigzagging across every flat run of ground. The
          * overlap lands under the neighbour drawn next, so it is invisible. */
         if (face == kBlockFaceTop) {
+            /* Top faces carry their own edge one pixel outwards: adjacent
+             * diamonds leave a gap at the tile seams, and the gap shows the
+             * block below as a brown crack across flat ground. Side faces are
+             * left alone -- their silhouette is the reason a column has an
+             * outline. */
             if (x0 > viewLeft && x0 > 0) {
                 line[-1] = s[0];
             }

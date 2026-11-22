@@ -8,9 +8,13 @@
  * vertical distance between adjacent tile centres (true 2:1 isometric).
  *
  *   screenX = (x - y) * (kTileW / 2) + camX
- *   screenY = (x + y) * (kTileH / 2) - z * (kTileH / 2) + camY
+ *   screenY = (x + y) * (kTileH / 2) - z * kTileH + camY
  *
- * with kTileW/2 = 16 and kTileH/2 = 8.  The largest magnitude produced
+ * with kTileW/2 = 16 and kTileH/2 = 8.  Height steps by a whole tile height,
+ * not half of one: a block's side face is kTileH = 16 pixels tall (see
+ * bake.h, whose side parallelogram is 16 rows), so stacking the next block up
+ * must move it up by exactly 16.  At 8 every block overlapped the one under
+ * it by half and a column of three read as one thin slab.  The largest magnitude produced
  * for x=y=47, z=7 is 696, far inside a 16-bit short.
  *
  * Iso_Unproject inverts the z=0 plane of that mapping:
@@ -42,7 +46,7 @@ void Iso_Project(short x, short y, short z, short camX, short camY,
                  short *screenX, short *screenY)
 {
     int sx = ((int)x - (int)y) * (kTileW / 2) + (int)camX;
-    int sy = ((int)x + (int)y) * (kTileH / 2) - (int)z * (kTileH / 2) + (int)camY;
+    int sy = ((int)x + (int)y) * (kTileH / 2) - (int)z * kTileH + (int)camY;
 
     *screenX = (short)sx;
     *screenY = (short)sy;

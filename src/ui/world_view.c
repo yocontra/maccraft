@@ -207,7 +207,10 @@ static void ComputeVisibleRange(const WorldView *v, const Rect *view, short *xMi
     short right  = (short)(view->right - v->display.left);
     short bottom = (short)(view->bottom - v->display.top);
 
-    *sumMin  = (short)(((int)top - (int)v->camY) / (kTileH / 2) - kWorldZ - 2);
+    /* A column kWorldZ tall draws its top kWorldZ * kTileH pixels above its
+     * ground, which is 2 * kWorldZ tile sums now that a level is a whole
+     * tile height. */
+    *sumMin  = (short)(((int)top - (int)v->camY) / (kTileH / 2) - 2 * kWorldZ - 2);
     *sumMax  = (short)(((int)bottom - (int)v->camY) / (kTileH / 2) + 2);
     *diffMin = (short)(((int)left - (int)v->camX) / (kTileW / 2) - 2);
     *diffMax = (short)(((int)right - (int)v->camX) / (kTileW / 2) + 2);
@@ -386,7 +389,10 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
             }
 
             /* Projection hoisted out of the block loop: one multiply pair per
-             * column, and each level is one subtract from sy0. */
+             * column, and each level is one tile height up. A block's side face
+             * is kTileH tall (the baked quad is 16 rows), so the step between
+             * levels must be kTileH as well -- at kTileH/2 every block overlapped
+             * the one under it and a column read as a stack of slabs. */
             sx  = (short)(((x - y) * (kTileW / 2)) + v->camX + v->display.left);
             sy0 = (short)(((x + y) * (kTileH / 2)) + v->camY + v->display.top);
 
@@ -395,7 +401,7 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
              * for. It is a superset of the exact box below, so it can never
              * reject a column that would have drawn. */
             SetRect(&box, (short)(sx - kTileW / 2 - 1),
-                    (short)(sy0 - ((kWorldZ - 1) * (kTileH / 2)) - (kTileH / 2) - 1),
+                    (short)(sy0 - ((kWorldZ - 1) * kTileH) - (kTileH / 2) - 1),
                     (short)(sx + kTileW / 2 + 1), (short)(sy0 + kTileH + 1));
             if (!SectRect(&box, clip, &hit)) {
                 continue;
@@ -410,7 +416,7 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
              * highest block (kTileH/2 above its centre) down to the bottom
              * vertex of the lowest block's side (kTileH below its centre). */
             SetRect(&box, (short)(sx - kTileW / 2 - 1),
-                    (short)(sy0 - (top * (kTileH / 2)) - (kTileH / 2) - 1),
+                    (short)(sy0 - (top * kTileH) - (kTileH / 2) - 1),
                     (short)(sx + kTileW / 2 + 1), (short)(sy0 + kTileH + 1));
             if (!SectRect(&box, clip, &hit)) {
                 continue;
@@ -420,7 +426,7 @@ void WorldView_Draw(const WorldView *v, const Rect *clip)
                 BlockID id = World_Get(x, y, z);
 
                 if (id != 0) {
-                    DrawBlock(v, x, y, z, id, sx, (short)(sy0 - (z * (kTileH / 2))));
+                    DrawBlock(v, x, y, z, id, sx, (short)(sy0 - (z * kTileH)));
                 }
             }
         }

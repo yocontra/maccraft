@@ -2,21 +2,31 @@
 
 An isometric block-building game for classic 68k Macintoshes.
 
-MacCraft is a small Minecraft-inspired sandbox: a fixed 48 × 48 × 8 world of
-dirt, stone and grass drawn as 32 × 16 isometric tiles, with place and remove
-actions, camera panning and a three-swatch block selector. It is written in C
-against the classic Macintosh Toolbox and compiled with
+MacCraft is a small Minecraft-inspired sandbox: a fixed 96 × 96 × 12 island of
+grass, sand, water, wood and stone drawn as 32 × 16 isometric tiles, with a
+village of four houses, a forest, a lake and a snow-capped hill. Blocks are
+full cubes — a block of grass is one block of dirt with grass baked into its
+top and its lip — and every face is textured and shaded by direction, with
+ambient occlusion where faces crowd together. It is written in C against the
+classic Macintosh Toolbox and compiled with
 [Retro68](https://github.com/autc04/Retro68). There is no 3D hardware and no
 68020-only code: everything is integer 2D QuickDraw, so it runs on a Mac Plus
 or SE as well as a Quadra.
 
-<img src="docs/img/game.png" alt="MacCraft: a textured green block plateau on a blue sky, with the block selector along the bottom" width="100%">
+<img src="docs/img/game.png" alt="MacCraft: four plank houses with pitched roofs and brick chimneys around a village square, with trees, a lake, and the block selector along the bottom" width="100%">
+
+<p align="center">
+  <img src="docs/img/lake.png" alt="The island's lake: a sand shore with trees, the player swimming in dithered water" width="49%">
+  <img src="docs/img/forest.png" alt="The forest and snow-capped stone hills" width="49%">
+</p>
 
 ## Controls
 
 | Action | Input |
 | --- | --- |
 | Walk | Arrow keys or W/A/S/D (hold to keep walking) |
+| Walk into a house | Doorways are two blocks wide and two tall; walk at one and you go through |
+| Swim | Walk into the lake: you float and can climb back out |
 | Climb a step | Walk into a single block: one block is stepped up, two needs a jump and cannot be walked |
 | Jump | Space |
 | Place block | Click a tile's top face to stack, or its side face to build beside it |
@@ -29,34 +39,41 @@ or SE as well as a Quadra.
 | Quit | Cmd-Q (the world is saved) |
 
 Fourteen block kinds are available; the hotbar shows them all and the selected
-one is outlined.
+one is outlined. The world is saved when the application quits and restored on
+the next launch; a save from an older build is discarded rather than resumed.
 
 ## Requirements
 
 - System 7 or later on a 68000 (or better) Macintosh
-- 768 KB of application memory; a 1 MB partition is comfortable
+- 1.5 MB of application memory; 2 MB preferred (the world is 108 KB on its own)
 - No network, no extensions, no System 7.5 features
 
 ## Current state
 
-The world is a hand-authored island — coast, sand shelf, lagoon, plateau, stone
-ridge with snow, a plank hut and trees — rendered as 32x16 isometric tiles with
-one shade per face (top 1.0, left 0.8, right 0.6, dimmed by neighbouring blocks),
-face culling, a Minecraft-style cloud layer, and a selection wireframe on the
-block under the middle of the view. Every face is textured: one patterned fill
-whose ink is a highlight step of the block's colour, so a surface reads as
-material rather than as a flat wash.
+- **World**: 96 × 96 × 12, generated at launch — a sand-ringed coast, a lake in
+  the south-west, a village plateau in the middle, a forest belt and a
+  snow-capped hill in the north-east.
+- **Village**: four houses, each with a cobble sill, four courses of plank wall
+  with log corners, a two-wide two-tall doorway with log jambs and a stone step,
+  windows on both flanks, a pitched roof closed on every row, and a brick
+  chimney on the ridge.
+- **Trees**: four blocks of trunk with the crown above head height, so you can
+  walk under the leaves; crowns are two wide frames, a 3×3 and a plus.
+- **Rendering**: every face is a hand-authored 16 × 16 texture sheared onto its
+  isometric quad, shaded one step per face direction (top 1.0, left 0.8, right
+  0.6 in Minecraft's fixed sun) with ambient occlusion where blocks crowd a
+  face. Water and leaves keep holes in their mask so the bed and the sky show
+  through. Drawn in direct colour through the sprite layer; a full repaint of
+  the play area is about 100 ticks on the emulated guest, and a camera pan while
+  walking costs about one, because it scrolls the frame and repaints only the
+  strip the shift uncovered.
+- **HUD**: crosshair, the held block drawn at 2×, a hotbar of real block
+  textures, and a status strip reading the block under the cursor, the block
+  that would be placed, and the tile coordinates.
+- **Sound**: a click on a swatch, place and break.
 
-Every block face carries a hand-authored 16x16 texture, sheared onto its
-isometric quad and shaded one step per face direction, drawn in direct colour.
-A full repaint of the play area costs 25 ticks (0.42 s) on the emulated guest,
-down from 67. The HUD is a crosshair, the held block drawn at 2x, and a hotbar of
-real block textures. Everything has sound: a click on a swatch, place and break.
-Clicks are picked on the surface you can see, not on the ground plane, so raised
-terrain behaves. The profile and the pixel-pipeline findings are in
+The pixel pipeline and the two QuickDraw facts it rests on are in
 `docs/textures.md`.
-See `docs/textures.md` for how the pixel pipeline works and the two QuickDraw
-facts it rests on.
 
 ## Building
 
@@ -109,8 +126,10 @@ requires a configured `LaunchAPPL.cfg`), `make debug-build`, `make clean`,
 bash tests/host/run.sh
 ```
 
-runs the Toolbox-free unit tests (world bounds, isometric round-trip) on the
-host with AddressSanitizer and UBSan. The emulator scenarios in
+runs the Toolbox-free unit tests on the host with AddressSanitizer and UBSan:
+world bounds, the isometric projection and picking, the face baker, the light
+model, the island generator, the player's physics, and a walkability suite that
+drives the real collision code through every doorway and under every tree. The emulator scenarios in
 `tests/emulator/` drive a real SheepShaver guest and are run locally on macOS;
 see `tests/emulator/README.md`.
 
