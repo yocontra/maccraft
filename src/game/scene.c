@@ -454,6 +454,11 @@ static void BuildVillage(void)
     BuildPath(36, 46, 44, 47);   /* across the square, west to east */
     BuildPath(39, 42, 40, 50);   /* north to south */
 
+    /* Two torches beside the well, so the square is lit when the sun goes
+     * down. They are the only light in the village until the player adds more. */
+    World_Set(40, 47, 4, kBlockTorch);
+    World_Set(43, 48, 4, kBlockTorch);
+
     /* A well head in the middle of the square: stone ring, water inside. */
     World_Set(41, 47, 4, kBlockCobblestone);
     World_Set(42, 47, 4, kBlockCobblestone);

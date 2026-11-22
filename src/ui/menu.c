@@ -125,6 +125,9 @@ void DoMenuCommand(long menuCommand)
             case kItemSaveWorld:
                 GameWindow_SaveWorld();
                 break;
+            case kItemDayNight:
+                GameWindow_ToggleDayNight();
+                break;
             case kItemResetWorld:
                 /* Rebuild the island and put the player back on it: the menu
                  * promised a reset and used to do nothing at all. */

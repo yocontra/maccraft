@@ -17,8 +17,9 @@ or SE as well as a Quadra.
 <img src="docs/img/game.png" alt="MacCraft: four plank houses with pitched roofs and brick chimneys around a village square, with trees, a lake, and the block selector along the bottom" width="100%">
 
 <p align="center">
-  <img src="docs/img/lake.png" alt="The island's lake: a sand shore with trees, the player swimming in dithered water" width="49%">
-  <img src="docs/img/forest.png" alt="The forest and snow-capped stone hills" width="49%">
+  <img src="docs/img/lake.png" alt="The island's lake: a sand shore with trees, the player swimming in dithered water" width="32%">
+  <img src="docs/img/forest.png" alt="The forest and snow-capped stone hills" width="32%">
+  <img src="docs/img/night.png" alt="The village at night, lit by two torches beside the well" width="32%">
 </p>
 
 ## Controls
@@ -34,6 +35,8 @@ or SE as well as a Quadra.
 | Mine block | Hold shift and the mouse button on a block until it breaks |
 | Select block | Click a hotbar swatch, or press 1-9 |
 | Cycle block | T |
+| Place a torch | Pick the torch (last hotbar swatch, or T round to it) and click |
+| Day / dusk / night | N, or Game > Toggle Day / Night |
 | Recentre view | Walk: the camera follows when you near the edge of the view |
 | New game | Cmd-N |
 | Reset world | Game > Reset World |
@@ -60,10 +63,19 @@ the next launch; a save from an older build is discarded rather than resumed.
   chimney on the ridge.
 - **Trees**: four blocks of trunk with the crown above head height, so you can
   walk under the leaves; crowns are two wide frames, a 3×3 and a plus.
+- **Torches**: a post with a flame at the centre of its cell, lighting a pool of
+  about seven blocks. The village square has two beside the well; place more from
+  the hotbar and the light follows them (a removal takes its pool with it).
+- **Lighting**: a light level per world cell, Minecraft's 0–15 scheme. Sky light
+  fills every cell open to the sky down to the first opaque block, at the current
+  sun level; torches flood out from their own cell with one level of decay per
+  step, through air, water and leaves. A face takes the level of the air cell in
+  front of it, so a cellar is dark and a torch is worth carrying. Day, dusk and
+  night are the same grid at sun 15, 8 and 3 — N cycles them and the sky follows.
 - **Rendering**: every face is a hand-authored 16 × 16 texture sheared onto its
-  isometric quad, shaded one step per face direction (top 1.0, left 0.8, right
-  0.6 in Minecraft's fixed sun) with ambient occlusion where blocks crowd a
-  face. Water and leaves keep holes in their mask so the bed and the sky show
+  isometric quad, shaded one step per face direction (top 1.0, left 0.85, right
+  0.72) with ambient occlusion where blocks crowd a face, and the light level on
+  top of that. Water and leaves keep holes in their mask so the bed and the sky show
   through. Drawn in direct colour through the sprite layer; a full repaint of
   the play area is about 100 ticks on the emulated guest, and a camera pan while
   walking costs about one, because it scrolls the frame and repaints only the

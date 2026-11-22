@@ -104,4 +104,34 @@ LightColor Light_Shade(LightColor in, short factor);
 /* Multiply two 0..256 factors into one, rounded and clamped to 0..256. */
 short Light_Combine(short faceFactor, short occlusion);
 
+/* ---------------------------------------------------------------- levels */
+/*
+ * Light levels, Minecraft's scheme: 0 (black) to 15 (full sky). One byte per
+ * world cell, which is 108 KB for a 96x96x12 world -- the reason the
+ * application partition is two megabytes.
+ *
+ * Two sources. Sky light fills every cell open to the sky straight down to the
+ * first opaque block and stops there, at the current sun level; torch light
+ * floods out from each torch with one level of decay per step, through air.
+ * The renderer reads the level of the air cell in front of a face and turns it
+ * into one of the four palette steps, so a lit face is bright and a face in a
+ * cellar is dark -- which is what makes a torch worth carrying.
+ *
+ * Recomputing the whole world is two passes over 110k cells: it happens once at
+ * launch and on a day/night change. An edit (or a torch going down) only
+ * relights the columns it touched and a box around it.
+ */
+short Light_Level(short x, short y, short z);      /* 0..15; 0 outside */
+void  Light_Rebuild(void);                          /* whole world */
+void  Light_Relight(short x, short y, short z);     /* after an edit there */
+short Light_Sky(void);                              /* current sun level 0..15 */
+void  Light_SetSky(short level);                    /* day, dusk, night */
+int   Light_TorchCount(void);                       /* for tests and the HUD */
+
+/* A 0..15 level as a 0..256 brightness factor, on Minecraft's curve rather
+ * than a straight line: the eye reads the bottom of the range as much darker
+ * than the arithmetic suggests, and a straight line made torch pools look like
+ * grey discs. */
+short Light_LevelFactor(short level);
+
 #endif /* LIGHT_H */

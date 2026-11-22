@@ -243,6 +243,24 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
     Boolean showLeft  = World_Get(x, (short)(y + 1), z) == 0;
     Boolean showRight = World_Get((short)(x + 1), y, z) == 0;
 
+    /* A torch is not a cube: it is a stick with a flame, drawn at the centre of
+     * its cell. It takes the light of its own cell, so at night it is a bright
+     * dot in a dark room. */
+    if (id == kBlockTorch) {
+        Rect post;
+        Rect flameBox;
+        short bright = Light_LevelFactor(Light_Level(x, y, z));
+
+        (void)v;
+        SetRect(&post, (short)(sx - 1), (short)(sy - 12),
+                (short)(sx + 1), (short)(sy - 2));
+        SetRect(&flameBox, (short)(sx - 2), (short)(sy - 16),
+                (short)(sx + 2), (short)(sy - 12));
+        Sprite_FillRect(&post, 0x8A5A2BUL);
+        Sprite_FillRect(&flameBox, bright > 190 ? 0xFFEE88UL : 0xCC8833UL);
+        return;
+    }
+
     /* A block with every face buried needs no lighting and no drawing. Most of
      * a filled world is like this, and occlusion is five neighbour lookups per
      * face. */
@@ -262,6 +280,8 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
     if (showTop) {
         topShade = Light_Combine(Light_FaceFactor(kLightFaceTop),
                                  Light_Occlusion(x, y, z, kLightFaceTop));
+        topShade = Light_Combine(topShade,
+                                 Light_LevelFactor(Light_Level(x, y, (short)(z + 1))));
 
         /* Cast shadow. The sun sits up and to the left, so a column casts down
          * and to the right: the two cells up-sun of a top face decide whether it
@@ -291,10 +311,14 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
     if (showLeft) {
         leftShade = Light_Combine(Light_FaceFactor(kLightFaceLeft),
                                   Light_Occlusion(x, y, z, kLightFaceLeft));
+        leftShade = Light_Combine(leftShade,
+                                  Light_LevelFactor(Light_Level(x, (short)(y + 1), z)));
     }
     if (showRight) {
         rightShade = Light_Combine(Light_FaceFactor(kLightFaceRight),
                                    Light_Occlusion(x, y, z, kLightFaceRight));
+        rightShade = Light_Combine(rightShade,
+                                   Light_LevelFactor(Light_Level((short)(x + 1), y, z)));
     }
 
     if (Sprite_Ready()) {
@@ -361,6 +385,17 @@ static void DrawBlock(const WorldView *v, short x, short y, short z, BlockID id,
      * the world look like a spreadsheet. */
 }
 
+
+/* Harness probe: the shade step the top face of (x,y,z) would be drawn with.
+ * Kept next to DrawBlock so a test cannot drift from the real chain. */
+short WorldView_TESTTopStep(short x, short y, short z)
+{
+    short shade = Light_Combine(Light_FaceFactor(kLightFaceTop),
+                                Light_Occlusion(x, y, z, kLightFaceTop));
+
+    shade = Light_Combine(shade, Light_LevelFactor(Light_Level(x, y, (short)(z + 1))));
+    return Sprite_ShadeStep(shade);
+}
 
 void WorldView_Draw(const WorldView *v, const Rect *clip)
 {

@@ -250,3 +250,239 @@ short Light_Combine(short faceFactor, short occlusion)
         combined = kLightMax;
     return (short)combined;
 }
+
+/* ------------------------------------------------------------- light grid */
+/*
+ * See light.h. One byte per world cell, filled by a sky pass and a torch
+ * flood fill. The flood fill is breadth first over a fixed ring buffer: the
+ * largest possible frontier is small (a torch reaches 15 cells in each of three
+ * axes), and a fixed buffer keeps the module allocation-free, which matters on
+ * a machine with a 2 MB partition.
+ */
+
+#include "blocks.h"
+#include "world.h"
+
+#define kLevelMax 15
+#define kTorchLevel 14          /* one below the torch's own cell */
+#define kQueueSize 8192
+
+/* Two grids, not one. Sky light and torch light are independent sources, and
+ * a single grid could not tell them apart: a torch going out would have to
+ * erase its pool without erasing the daylight that overlaps it. Each is a byte
+ * per cell, 108 KB apiece; the renderer reads their maximum. */
+static unsigned char sSkyGrid[kWorldX][kWorldY][kWorldZ];
+static unsigned char sTorchGrid[kWorldX][kWorldY][kWorldZ];
+
+static unsigned char sSky = kLevelMax;
+
+/* A cell light can travel through: air, water, leaves and glass. Anything else
+ * stops it. */
+static Boolean Transparent(short x, short y, short z)
+{
+    BlockID id;
+
+    if (x < 0 || x >= kWorldX || y < 0 || y >= kWorldY || z < 0 || z >= kWorldZ) {
+        return false;
+    }
+    id = World_Get(x, y, z);
+    return (Boolean)(id == kBlockEmpty || id == kBlockWater || id == kBlockLeaves ||
+                     id == kBlockGlass);
+}
+
+/* Water and leaves dim a step as well as costing a step, so a pond is darker
+ * than the air beside it and a canopy throws a real shade. */
+static short ExtraCost(short x, short y, short z)
+{
+    BlockID id = World_Get(x, y, z);
+
+    return (short)((id == kBlockWater || id == kBlockLeaves) ? 1 : 0);
+}
+
+short Light_Level(short x, short y, short z)
+{
+    short sky;
+    short torch;
+
+    if (x < 0 || x >= kWorldX || y < 0 || y >= kWorldY || z < 0 || z >= kWorldZ) {
+        return 0;
+    }
+    sky = (short)sSkyGrid[x][y][z];
+    torch = (short)sTorchGrid[x][y][z];
+    return (short)(sky > torch ? sky : torch);
+}
+
+short Light_LevelFactor(short level)
+{
+
+    static const unsigned short kCurve[16] = {
+        40, 64, 84, 104, 120, 136, 150, 164,
+        178, 190, 202, 214, 226, 236, 246, 256
+    };
+
+    if (level < 0) {
+        level = 0;
+    }
+    if (level > 15) {
+        level = 15;
+    }
+    return (short)kCurve[level];
+}
+
+short Light_Sky(void)
+{
+    return (short)sSky;
+}
+
+int Light_TorchCount(void)
+{
+    short x, y, z;
+    int n = 0;
+
+    for (x = 0; x < kWorldX; x++)
+        for (y = 0; y < kWorldY; y++)
+            for (z = 0; z < kWorldZ; z++)
+                if (World_Get(x, y, z) == kBlockTorch)
+                    n++;
+    return n;
+}
+
+/* Sky light down each column: full sun until the first opaque block. Water and
+ * leaves cost a step, so a canopy shades the ground under it. */
+static void SkyPass(short x0, short x1, short y0, short y1)
+{
+    short x, y, z;
+
+    for (x = x0; x <= x1; x++) {
+        for (y = y0; y <= y1; y++) {
+            short level = sSky;
+
+            for (z = (short)(kWorldZ - 1); z >= 0; z--) {
+                if (!Transparent(x, y, z)) {
+                    sSkyGrid[x][y][z] = 0;
+                    level = 0;
+                    continue;
+                }
+                if (ExtraCost(x, y, z) > 0 && level > 0) {
+                    level--;
+                }
+                sSkyGrid[x][y][z] = (unsigned char)level;
+            }
+        }
+    }
+}
+
+typedef struct {
+    short x, y, z;
+} LightCell;
+
+static LightCell sQueue[kQueueSize];
+static short sQueueHead;
+static short sQueueTail;
+
+static void Enqueue(short x, short y, short z)
+{
+    short next = (short)((sQueueTail + 1) % kQueueSize);
+
+    if (next == sQueueHead) {
+        return;                 /* full: drop; the cell already has its level */
+    }
+    sQueue[sQueueTail].x = x;
+    sQueue[sQueueTail].y = y;
+    sQueue[sQueueTail].z = z;
+    sQueueTail = next;
+}
+
+/* Flood torch light into a box. The box is cleared first, so a removed torch
+ * takes its pool with it; cells on the box edge are seeded with whatever they
+ * already hold, so light from outside still walks in. */
+static void TorchFill(short x0, short y0, short z0, short x1, short y1, short z1)
+{
+    short x, y, z;
+
+    sQueueHead = 0;
+    sQueueTail = 0;
+
+    for (x = x0; x <= x1; x++) {
+        for (y = y0; y <= y1; y++) {
+            for (z = z0; z <= z1; z++) {
+                Boolean edge = (Boolean)(x == x0 || x == x1 || y == y0 || y == y1 ||
+                                         z == z0 || z == z1);
+
+                sTorchGrid[x][y][z] = 0;
+                if (World_Get(x, y, z) == kBlockTorch) {
+                    sTorchGrid[x][y][z] = (unsigned char)kLevelMax;
+                    Enqueue(x, y, z);
+                }
+                else if (edge && sTorchGrid[x][y][z] > 0) {
+                    Enqueue(x, y, z);
+                }
+            }
+        }
+    }
+
+    while (sQueueHead != sQueueTail) {
+        static const signed char dirs[6][3] = {
+            {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
+        };
+        LightCell c = sQueue[sQueueHead];
+        short level = (short)sTorchGrid[c.x][c.y][c.z];
+        short d;
+
+        sQueueHead = (short)((sQueueHead + 1) % kQueueSize);
+        if (level <= 1) {
+            continue;
+        }
+        for (d = 0; d < 6; d++) {
+            short nx = (short)(c.x + dirs[d][0]);
+            short ny = (short)(c.y + dirs[d][1]);
+            short nz = (short)(c.z + dirs[d][2]);
+            short next;
+
+            if (!Transparent(nx, ny, nz)) {
+                continue;
+            }
+            next = (short)(level - 1 - ExtraCost(nx, ny, nz));
+            if (next <= 0 || next <= (short)sTorchGrid[nx][ny][nz]) {
+                continue;
+            }
+            sTorchGrid[nx][ny][nz] = (unsigned char)next;
+            Enqueue(nx, ny, nz);
+        }
+    }
+}
+
+void Light_Rebuild(void)
+{
+    SkyPass(0, (short)(kWorldX - 1), 0, (short)(kWorldY - 1));
+    TorchFill(0, 0, 0, (short)(kWorldX - 1), (short)(kWorldY - 1),
+              (short)(kWorldZ - 1));
+}
+
+void Light_Relight(short x, short y, short z)
+{
+    short x0 = (short)(x - 16), x1 = (short)(x + 16);
+    short y0 = (short)(y - 16), y1 = (short)(y + 16);
+
+    (void)z;
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= kWorldX) x1 = (short)(kWorldX - 1);
+    if (y1 >= kWorldY) y1 = (short)(kWorldY - 1);
+
+    SkyPass(x0, x1, y0, y1);
+    TorchFill(x0, y0, 0, x1, y1, (short)(kWorldZ - 1));
+}
+
+void Light_SetSky(short level)
+{
+    if (level < 0) {
+        level = 0;
+    }
+    if (level > kLevelMax) {
+        level = kLevelMax;
+    }
+    sSky = (unsigned char)level;
+    Light_Rebuild();
+}

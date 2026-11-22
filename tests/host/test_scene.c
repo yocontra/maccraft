@@ -39,7 +39,9 @@ enum {
     kBlockSnow    = 11,
     kBlockBedrock = 12,
     kBlockWater   = 13,
-    kBlockGlass   = 14
+    kBlockGlass  = 14,
+    kBlockTorch  = 15,
+    kBlockKinds  = 15
 };
 
 #define kSeaLevel 1
@@ -108,8 +110,8 @@ static void TestMaterialsAndBounds(void)
         if (counts[i] == 0)
             continue;
         distinct++;
-        /* Only the agreed 0..14 palette may appear. */
-        CHECK(i <= kBlockGlass);
+        /* Only the agreed palette may appear. */
+        CHECK(i <= kBlockKinds);
     }
 
     /* Acceptance minimum is four distinct materials including water; the
@@ -118,6 +120,7 @@ static void TestMaterialsAndBounds(void)
     CHECK(distinct >= 4);
     CHECK(counts[kBlockWater] > 0);
     CHECK(counts[kBlockGrass] > 0);
+    CHECK(counts[kBlockTorch] > 0);   /* the square is lit at night */
     CHECK(counts[kBlockSand] > 0);
     CHECK(counts[kBlockStone] > 0);
     CHECK(counts[kBlockLeaves] > 0);

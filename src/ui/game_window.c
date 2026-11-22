@@ -15,6 +15,7 @@
 #include "../game/scene.h"
 #include "../game/sky.h"
 #include "../game/pick.h"
+#include "../game/light.h"
 #include "../game/player.h"
 #include "../game/save.h"
 #include "../sound/sfx.h"
@@ -242,11 +243,17 @@ void GameWindow_Initialize(void)
         }
         if (solid < 200) {
             Scene_BuildIsland();
+    Light_Rebuild();
         }
     }
     else {
         Scene_BuildIsland();
+    Light_Rebuild();
     }
+
+    /* The light grid is derived from the world: sky down each column, then a
+     * flood fill from every torch. Rebuild it once the world is final. */
+    Light_Rebuild();
 
     /* Spawn after the world exists, on ground that is actually clear. */
     SpawnPlayerOnClearGround();
@@ -381,6 +388,7 @@ static void FinishBreak(void)
         return;
     }
     if (World_Set(sBreakX, sBreakY, sBreakZ, 0)) {
+        Light_Relight(sBreakX, sBreakY, sBreakZ);
         Boolean hard = (Boolean)(sBreakId == kBlockStone ||
                                  sBreakId == kBlockCobblestone ||
                                  sBreakId == kBlockBrick ||
@@ -548,20 +556,29 @@ static void CentreOnPlayer(void)
  * lot of flat colour. Bands cost nothing extra -- the same pixels are written,
  * just in strips -- and give the view a horizon. */
 #define kSkyBands 16
-#define kSkyTopColour 0x4A86E8UL
-#define kSkyHorizonColour 0xC4DCF5UL
+#define kSkyTopDay      0x4A86E8UL
+#define kSkyHorizonDay  0xC4DCF5UL
+#define kSkyTopNight    0x0A1024UL
+#define kSkyHorizonNight 0x1B2545UL
 
+/* Blend two 0xRRGGBB colours by t/255. */
+static unsigned long BlendColour(unsigned long a, unsigned long b, long t)
+{
+    long r = ((long)((a >> 16) & 0xFF) * (255 - t) + (long)((b >> 16) & 0xFF) * t) / 255;
+    long g = ((long)((a >> 8) & 0xFF) * (255 - t) + (long)((b >> 8) & 0xFF) * t) / 255;
+    long bl = ((long)(a & 0xFF) * (255 - t) + (long)(b & 0xFF) * t) / 255;
+
+    return ((unsigned long)r << 16) | ((unsigned long)g << 8) | (unsigned long)bl;
+}
+
+/* The sky is the sun level: full daylight blue at 15, near black at 0. */
 static unsigned long SkyBandColour(short band)
 {
     long t = (long)band * 255L / (kSkyBands - 1);
-    long r = ((long)((kSkyTopColour >> 16) & 0xFF) * (255 - t) +
-              (long)((kSkyHorizonColour >> 16) & 0xFF) * t) / 255;
-    long g = ((long)((kSkyTopColour >> 8) & 0xFF) * (255 - t) +
-              (long)((kSkyHorizonColour >> 8) & 0xFF) * t) / 255;
-    long b = ((long)(kSkyTopColour & 0xFF) * (255 - t) +
-              (long)(kSkyHorizonColour & 0xFF) * t) / 255;
+    long day = (long)Light_Sky() * 255L / 15L;
 
-    return ((unsigned long)r << 16) | ((unsigned long)g << 8) | (unsigned long)b;
+    return BlendColour(BlendColour(kSkyTopNight, kSkyTopDay, day),
+                       BlendColour(kSkyHorizonNight, kSkyHorizonDay, day), t);
 }
 
 static void DrawClouds(void)
@@ -586,11 +603,13 @@ static void DrawClouds(void)
             if (slab.right <= sRenderRect.left || slab.left >= sRenderRect.right) {
                 continue;
             }
-            Sprite_FillRect(&slab, 0xC8C8D8UL); /* shaded underside */
+            Sprite_FillRect(&slab, BlendColour(0x303848UL, 0xC8C8D8UL,
+                                              (long)Light_Sky() * 255L / 15L));
 
             slab.top = (short)(sRenderRect.top + cy);
             slab.bottom = (short)(slab.top + ch);
-            Sprite_FillRect(&slab, 0xFFFFFFUL);
+            Sprite_FillRect(&slab, BlendColour(0x3A4458UL, 0xFFFFFFUL,
+                                              (long)Light_Sky() * 255L / 15L));
         }
     }
 }
@@ -949,6 +968,7 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                  World_Get(placeX, placeY, placeZ) == 0 &&
                  !BlockFillsPlayer(placeX, placeY, placeZ) &&
                  World_Set(placeX, placeY, placeZ, (BlockID)(sBlockType + 1))) {
+            Light_Relight(placeX, placeY, placeZ);
             Sfx_Play(kSfxPlace);
             /* A small burst of the block's own colour: the placement reads even
              * where the new block is behind something. */
@@ -1035,6 +1055,11 @@ static Boolean GameWindow_HandleKeyDown(char key)
     case 'T': /* Cycle block type */
         sBlockType = (short)((sBlockType + 1) % kGameNumBlockTypes);
         MarkDirty(&sBlockSelectorRect);
+        return true;
+
+    case 'n':
+    case 'N': /* Day, dusk, night */
+        GameWindow_ToggleDayNight();
         return true;
 
     case kLeftArrowKey:
@@ -1725,10 +1750,42 @@ short GameWindow_PlayerJumpPeakForTest(void)
 }
 
 /* Rebuild the island and respawn the player, for the Game menu's Reset World. */
+void GameWindow_Repaint(void)
+{
+    if (!sInitialized || sWindow == NULL) {
+        return;
+    }
+    MarkDirty(&sDisplayRect);
+    sStripDirty = true;
+    FlushDirty();
+}
+
+/* Day, dusk, night, and round again. The sun level is the sky light: 15 fills
+ * every open cell with daylight, 8 is a low evening sun, 3 leaves the world lit
+ * only by torches and the sky's own glow. */
+void GameWindow_ToggleDayNight(void)
+{
+    static const short kLevels[] = { 15, 8, 3 };
+    short current = Light_Sky();
+    short next = 15;
+    short i;
+
+    for (i = 0; i < 3; i++) {
+        if (current == kLevels[i]) {
+            next = kLevels[(i + 1) % 3];
+            break;
+        }
+    }
+    /* Any other level (a save from a harness run) moves to daylight. */
+    Light_SetSky(next);
+    GameWindow_Repaint();
+}
+
 void GameWindow_ResetWorld(void)
 {
     Save_Delete();
     Scene_BuildIsland();
+    Light_Rebuild();
     SpawnPlayerOnClearGround();
     Hover_Reset();
     CentreOnPlayer();

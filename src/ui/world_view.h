@@ -33,5 +33,6 @@ void WorldView_DrawWithOverlay(const WorldView *v, const Rect *clip,
                                WorldView_OverlayProc overlay, void *context);
 
 void WorldView_Draw(const WorldView *v, const Rect *clip);
+short WorldView_TESTTopStep(short x, short y, short z);
 
 #endif

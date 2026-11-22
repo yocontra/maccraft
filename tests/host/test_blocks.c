@@ -29,7 +29,7 @@ static void TestStoneFallback(void)
 
     CHECK(stone != NULL);
     CHECK(Block_Look(kBlockEmpty) == stone);
-    CHECK(Block_Look(15) == stone);
+    CHECK(Block_Look(16) == stone);
     CHECK(Block_Look(200) == stone);
     CHECK(Block_Look(255) == stone);
 }

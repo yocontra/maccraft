@@ -436,6 +436,27 @@ static const unsigned char kTexWater[kArtTextureBytes] = {
    no alpha the pane is a light fill rather than a transparent hole, so the
    frame carries the read. */
 
+/* Torch: a bright tip over a wooden shaft. Only the hotbar swatch uses it as a
+ * face; the world pass draws the torch as a post and a flame. */
+static const unsigned char kTexTorch[kArtTextureBytes] = {
+    15, 15, 15, 14, 15, 15, 15, 14, 15, 14, 14, 15, 14, 15, 15, 13,
+    15, 15, 13, 15, 15, 15, 15, 13, 15, 15, 14, 14, 13, 13, 15, 15,
+    13, 13, 15, 14, 13, 14, 15, 14, 14, 15, 14, 15, 15, 15, 15, 15,
+    14, 13, 13, 13, 13, 14, 15, 15, 14, 14, 14, 15, 15, 13, 14, 14,
+    12, 12, 12, 12, 32, 33, 33, 33, 33, 33, 33, 32, 12, 12, 12, 12,
+    12, 12, 12, 12, 32, 33, 33, 33, 33, 33, 33, 32, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 15, 14, 14, 14, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 14, 15, 14, 14, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 14, 14, 14, 15, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 15, 14, 15, 15, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 14, 14, 14, 14, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 14, 14, 15, 14, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 14, 14, 15, 15, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 15, 14, 14, 14, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 14, 15, 14, 14, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 14, 15, 14, 15, 12, 12, 12, 12, 12, 12,
+};
+
 static const unsigned char kTexGlass[kArtTextureBytes] = {
     43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43,
     43, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 43,
@@ -548,6 +569,8 @@ const unsigned char *Art_Texture(BlockID id, short face)
         return kTexWater;
     case 14: /* glass */
         return kTexGlass;
+    case 15: /* torch */
+        return kTexTorch;
     case 0: /* empty */
     default:
         /* Unknown ids draw as stone so a corrupt world cell is still solid. */

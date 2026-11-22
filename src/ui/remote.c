@@ -13,6 +13,7 @@
 #include "hover.h"
 #include "../game/pick.h"
 #include "../game/iso.h"
+#include "../game/light.h"
 #include "world_view.h"
 #include "remote.h"
 
@@ -431,6 +432,142 @@ void Remote_Apply(const char *cmd)
             while (k > 0) out[q++] = (char)('0' + digits[--k]);
             out[q] = 0;
             Remote_SetResult(out);
+        }
+    }
+    else if (strncmp(cmd, "set ", 4) == 0) {
+        /* set x y z id: write a cell and relight, for harness scenes. */
+        const char *arg = cmd + 4;
+        short vals[4];
+        short n = 0, sign = 1;
+        long acc = 0;
+        Boolean any = false;
+
+        vals[0] = 0; vals[1] = 0; vals[2] = 0; vals[3] = 0;
+        while (*arg && n < 4) {
+            if (*arg == ' ') {
+                if (any) { vals[n++] = (short)(acc * sign); acc = 0; sign = 1; any = false; }
+                arg++;
+                continue;
+            }
+            if (*arg == '-') { sign = -1; arg++; continue; }
+            if (*arg >= '0' && *arg <= '9') { acc = acc * 10 + (*arg - '0'); any = true; }
+            arg++;
+        }
+        if (any && n < 4) { vals[n++] = (short)(acc * sign); }
+        if (n < 4) {
+            Remote_SetResult("set needs x y z id");
+        }
+        else if (World_Set(vals[0], vals[1], vals[2], (BlockID)vals[3])) {
+            Light_Relight(vals[0], vals[1], vals[2]);
+            GameWindow_Repaint();
+            Remote_SetResult("set");
+        }
+        else {
+            Remote_SetResult("out of range");
+        }
+    }
+    else if (strncmp(cmd, "step ", 5) == 0) {
+        const char *arg = cmd + 5;
+        short vals[3];
+        short n = 0, sign = 1, digits[4], k = 0, q = 0;
+        long acc = 0;
+        Boolean any = false;
+        char out[8];
+
+        vals[0] = 0; vals[1] = 0; vals[2] = 0;
+        while (*arg && n < 3) {
+            if (*arg == ' ') {
+                if (any) { vals[n++] = (short)(acc * sign); acc = 0; sign = 1; any = false; }
+                arg++;
+                continue;
+            }
+            if (*arg == '-') { sign = -1; arg++; continue; }
+            if (*arg >= '0' && *arg <= '9') { acc = acc * 10 + (*arg - '0'); any = true; }
+            arg++;
+        }
+        if (any && n < 3) { vals[n++] = (short)(acc * sign); }
+        if (n < 3) {
+            Remote_SetResult("step needs x y z");
+        }
+        else {
+            long v = (long)WorldView_TESTTopStep(vals[0], vals[1], vals[2]);
+
+            if (v == 0) digits[k++] = 0;
+            while (v > 0 && k < 3) { digits[k++] = (short)(v % 10); v /= 10; }
+            while (k > 0) out[q++] = (char)('0' + digits[--k]);
+            out[q] = 0;
+            Remote_SetResult(out);
+        }
+    }
+    else if (strncmp(cmd, "light ", 6) == 0) {
+        /* light x y z: the stored level, for harness assertions. */
+        const char *arg = cmd + 6;
+        short vals[3];
+        short n = 0;
+        short sign = 1;
+        long acc = 0;
+        Boolean any = false;
+        char out[12];
+        short q = 0;
+        long v;
+        short digits[6];
+        short k = 0;
+
+        vals[0] = 0; vals[1] = 0; vals[2] = 0;
+        while (*arg && n < 3) {
+            if (*arg == ' ') {
+                if (any) { vals[n++] = (short)(acc * sign); acc = 0; sign = 1; any = false; }
+                arg++;
+                continue;
+            }
+            if (*arg == '-') { sign = -1; arg++; continue; }
+            if (*arg >= '0' && *arg <= '9') { acc = acc * 10 + (*arg - '0'); any = true; }
+            arg++;
+        }
+        if (any && n < 3) { vals[n++] = (short)(acc * sign); }
+        if (n < 3) {
+            Remote_SetResult("light needs x y z");
+        }
+        else {
+            v = (long)Light_Level(vals[0], vals[1], vals[2]);
+            if (v == 0) digits[k++] = 0;
+            while (v > 0 && k < 5) { digits[k++] = (short)(v % 10); v /= 10; }
+            while (k > 0) out[q++] = (char)('0' + digits[--k]);
+            out[q] = 0;
+            Remote_SetResult(out);
+        }
+    }
+    else if (strncmp(cmd, "sun", 3) == 0) {
+        /* sun <0..15>: set the sky level outright, for the harness. */
+        const char *arg = cmd + 3;
+        short level = 0;
+        short any = 0;
+
+        while (*arg) {
+            if (*arg >= '0' && *arg <= '9') {
+                level = (short)(level * 10 + (*arg - '0'));
+                any = 1;
+            }
+            arg++;
+        }
+        if (!any) {
+            Remote_SetResult("sun needs 0..15");
+        }
+        else {
+            Light_SetSky(level);
+            GameWindow_Repaint();
+            {
+                char out[8];
+                short q = 0;
+                long v = Light_Sky();
+                short digits[4];
+                short n = 0;
+                if (v == 0) digits[n++] = 0;
+                while (v > 0 && n < 3) { digits[n++] = (short)(v % 10); v /= 10; }
+                while (n > 0) out[q++] = (char)('0' + digits[--n]);
+                out[q] = 0;
+                Remote_SetResult(out);
+            }
         }
     }
     else if (strncmp(cmd, "level", 5) == 0) {

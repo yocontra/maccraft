@@ -39,6 +39,7 @@ run_test test_player "$repo/src/game/player.c" "$repo/src/game/world.c" "$repo/s
 run_test test_pick "$repo/src/game/pick.c" "$repo/src/game/iso.c" "$repo/src/game/world.c"
 run_test test_dither "$repo/src/game/dither.c"
 run_test test_light "$repo/src/game/light.c" "$repo/src/game/world.c"
+run_test test_lightgrid "$repo/src/game/light.c" "$repo/src/game/world.c" "$repo/src/game/blocks.c"
 run_test test_sky "$repo/src/game/sky.c"
 run_test test_scene "$repo/src/game/scene.c" "$repo/src/game/world.c"
 run_test test_scene_walk "$repo/src/game/scene.c" "$repo/src/game/world.c" "$repo/src/game/blocks.c" "$repo/src/game/player.c"

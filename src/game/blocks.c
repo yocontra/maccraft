@@ -212,6 +212,18 @@ static const BlockLook kGlassLook = {
 };
 
 /* Indexed by id - 1; the order must match the enum in blocks.h. */
+/* Torch: warm wood with a bright flame tip. Only the hotbar swatch and the
+ * mono fallback ever draw it as a block; the world pass draws a post. */
+static const BlockLook kTorchLook = {
+    /* Cube CC9900: warm flame orange. Display-legal levels only. */
+    { 0xCCCC, 0x9999, 0x0000 },
+    { 0xCCCC, 0x9999, 0x0000 },
+    { 0xCCCC, 0x9999, 0x0000 },
+    /* A flame band across the middle rows of the top, and a shaft on the side. */
+    { 0x00, 0x18, 0x3C, 0x7E, 0x7E, 0x3C, 0x18, 0x00 },
+    { 0x3C, 0x3C, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x00 }
+};
+
 static const BlockLook kLooks[kBlockKinds] = {
     /* 1  */ kGrassLook,
     /* 2  */ kDirtLook,
@@ -226,7 +238,8 @@ static const BlockLook kLooks[kBlockKinds] = {
     /* 11 */ kSnowLook,
     /* 12 */ kBedrockLook,
     /* 13 */ kWaterLook,
-    /* 14 */ kGlassLook
+    /* 14 */ kGlassLook,
+    /* 15 */ kTorchLook
 };
 
 #undef BLOCK_HUE
@@ -314,7 +327,8 @@ static const char *const kNames[kBlockKinds + 1] = {
     "snow",
     "bedrock",
     "water",
-    "glass"
+    "glass",
+    "torch"
 };
 
 const char *Block_Name(BlockID id)

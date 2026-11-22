@@ -37,6 +37,7 @@ resource 'MENU' (130) {
         "Reset World", noIcon, noKey, noMark, plain;
         "-", noIcon, noKey, noMark, plain;
         "Save World", noIcon, noKey, noMark, plain;
+        "Toggle Day / Night", noIcon, "N", noMark, plain;
     }
 };
 
@@ -119,6 +120,6 @@ resource 'SIZE' (-1) {
     reserved,
     reserved,
     reserved,
-    1536 * 1024,  /* Minimal: a 96x96x12 world is 108K on its own */
-    2048 * 1024   /* Preferred: room for the save staging buffer and the HUD */
+    3072 * 1024,  /* Two 108K light grids, a 108K world, and the sprite sheet */
+    4096 * 1024   /* Preferred */
 };

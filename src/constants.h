@@ -31,6 +31,7 @@ enum {
     kItemToggleBlock = 1,
     kItemResetWorld  = 2,
     kItemSaveWorld   = 4,   /* item 3 is the separator */
+    kItemDayNight    = 5,
 
     /* Window resource IDs */
     kAboutBoxID   = 128,

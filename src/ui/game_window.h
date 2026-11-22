@@ -63,6 +63,10 @@ void GameWindow_Idle(void);
 /* Toggle between block types */
 void GameWindow_ToggleBlockType(void);
 
+/* Repaint the whole window: the light level changed and nothing else moved. */
+void GameWindow_Repaint(void);
+void GameWindow_ToggleDayNight(void);
+
 /* Test hooks used by src/selftest.c: same code paths a real click and a real
    arrow key take, without going through the event queue. */
 Boolean GameWindow_ClickForTest(short localX, short localY, Boolean shiftDown);

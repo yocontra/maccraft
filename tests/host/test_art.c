@@ -325,7 +325,7 @@ static void test_faces(void)
            "empty id does not draw as the stone side");
     checkf(Art_Texture(200, 1) == Art_Texture(3, 1),
            "id 200 does not draw as the stone side");
-    checkf(Art_Texture(15, 0) == Art_Texture(3, 0),
+    checkf(Art_Texture(kBlockKinds + 1, 0) == Art_Texture(3, 0),
            "the first unused id does not draw as stone");
 }
 

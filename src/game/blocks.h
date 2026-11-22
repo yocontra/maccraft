@@ -35,7 +35,8 @@ enum {
     kBlockBedrock = 12,
     kBlockWater = 13,
     kBlockGlass = 14,
-    kBlockKinds = 14 /* ids 1..kBlockKinds have a look */
+    kBlockTorch = 15,
+    kBlockKinds = 15 /* ids 1..kBlockKinds have a look */
 };
 
 /* Face indices used by Block_Grain. */
