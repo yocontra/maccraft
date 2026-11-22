@@ -97,19 +97,21 @@ static const unsigned char kTexGrassTop[kArtTextureBytes] = {
      7,  4,  7,  6,  7,  7,  7,  7,  5,  6,  7,  7,  9,  7,  6,  7,
 };
 
-/* Grass side: the green cap is rows 0-4, the last row ragged teeth that dip
-   into the soil, and the body below is the same dirt as kTexDirt so a grass
-   block and a dirt block stack without a visible seam.  The lip is only on
-   the top edge: a green rim on all four edges would read as an outline, not
-   as grass hanging over the soil. */
+/* Grass side: a thin lip of green on one block of dirt.
+ *
+ * The lip used to be five rows of sixteen -- nearly a third of the face -- and
+ * with the top diamond above it a grass block's green read as half a block, so
+ * every one-block terrace looked like a dirt block with a half block of grass
+ * balanced on it. Two rows, with a third row of ragged teeth dipping into the
+ * soil, is a lip: the face is one block, dirt, with grass on its top edge. */
 
 static const unsigned char kTexGrassSide[kArtTextureBytes] = {
-     6,  6,  7,  7,  6,  6,  6,  7,  6,  6,  7, 10,  7,  7,  5, 10,
-     6,  6,  6,  7,  5,  7,  5,  6,  7,  7, 10,  7,  6,  6,  7,  7,
-     8,  6,  8,  6,  6,  9,  8,  6,  7,  6,  8,  8,  6,  8,  7,  8,
-    14,  8, 13, 10,  9, 15, 14,  9,  7,  8, 14, 12,  9, 14,  8, 14,
-    33, 33, 14,  9, 14, 13, 15, 14,  8, 13, 12, 15, 14, 13, 12, 13,
-    32, 13, 12, 14, 13, 14, 13, 12, 15, 15, 15, 15, 15, 14, 14, 15,
+     6,  7,  6, 10,  7,  6,  6,  7, 11,  6,  7,  6,  9,  7,  6,  7,
+     7,  6, 10,  6,  7, 11,  9,  6,  6,  8,  7,  6,  7, 10,  6,  7,
+    13, 32,  7, 14, 33, 10, 13, 14,  6, 15, 32, 14,  7, 13, 33, 14,
+    12, 14, 13, 13, 12, 12, 15, 13, 14, 14, 15, 33, 15, 13, 15, 14,
+    12, 14, 32, 33, 15, 15, 12, 13, 14, 13, 15, 32, 14, 33, 33, 14,
+    14, 13, 14, 12, 33, 33, 15, 14, 15, 14, 14, 33, 32, 15, 14, 13,
     13, 14, 12, 15, 14, 14, 13, 12, 15, 14, 15, 13, 14, 14, 13, 14,
     14, 13, 13, 13, 14, 14, 13, 13, 14, 15, 13, 14, 13, 14, 33, 15,
     13, 14, 14, 13, 15, 14, 14, 13, 13, 14, 13, 14, 12, 14, 14, 33,
@@ -117,8 +119,8 @@ static const unsigned char kTexGrassSide[kArtTextureBytes] = {
     12, 14, 15, 14, 13, 13, 13, 14, 14, 13, 15, 14, 14, 15, 14, 15,
     14, 14, 14, 15, 13, 13, 14, 13, 12, 13, 12, 13, 15, 14, 13, 15,
     32, 32, 14, 15, 14, 13, 12, 12, 14, 14, 14, 13, 32, 33, 32, 14,
+    13, 13, 32, 32, 14, 14, 32, 15, 13, 13, 15, 15, 14, 14, 12, 14,
     12, 14, 13, 13, 12, 12, 15, 13, 14, 14, 15, 33, 15, 13, 15, 14,
-    12, 14, 32, 33, 15, 15, 12, 13, 14, 13, 15, 32, 14, 33, 33, 14,
     14, 13, 14, 12, 33, 33, 15, 14, 15, 14, 14, 33, 32, 15, 14, 13,
 };
 

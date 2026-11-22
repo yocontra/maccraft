@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "art.h"
+#include "blocks.h"
 
 static int sFailures;
 
@@ -407,6 +408,52 @@ static void test_ink(void)
     }
 }
 
+/*
+ * A grass block is one block of dirt with a lip of grass on its top edge. The
+ * lip used to be five rows of sixteen, which made every one-block terrace read
+ * as a dirt block with half a block of grass on top. This pins the shape: two
+ * green rows, at most one ragged row below them, dirt under that.
+ */
+static void TestGrassLipIsThin(void)
+{
+    const unsigned char *side = Art_Texture(kBlockGrass, 1);
+    const unsigned char *top = Art_Texture(kBlockGrass, 0);
+    const unsigned char *dirt = Art_Texture(kBlockDirt, 0);
+    unsigned char greenSet[kArtPaletteEntries];
+    unsigned char dirtSet[kArtPaletteEntries];
+    int i, row, col, green0 = 0, green1 = 0, soilBelow = 0, wrongBelow = 0;
+
+    memset(greenSet, 0, sizeof greenSet);
+    memset(dirtSet, 0, sizeof dirtSet);
+    for (i = 0; i < kArtTextureBytes; i++) {
+        greenSet[top[i] % kArtPaletteEntries] = 1;
+        dirtSet[dirt[i] % kArtPaletteEntries] = 1;
+    }
+
+    for (col = 0; col < 16; col++) {
+        if (greenSet[side[0 * 16 + col] % kArtPaletteEntries])
+            green0++;
+        if (greenSet[side[1 * 16 + col] % kArtPaletteEntries])
+            green1++;
+    }
+    for (row = 3; row < 16; row++) {
+        for (col = 0; col < 16; col++) {
+            unsigned char v = side[row * 16 + col];
+
+            if (dirtSet[v % kArtPaletteEntries])
+                soilBelow++;
+            else if (greenSet[v % kArtPaletteEntries])
+                wrongBelow++;
+        }
+    }
+
+    checkf(green0 == 16, "row 0 is grass all the way across");
+    checkf(green1 >= 12, "row 1 is mostly grass");
+    checkf(soilBelow >= 130, "rows 3-15 are soil (%d/208)", soilBelow);
+    checkf(wrongBelow <= 2, "no grass below the lip (%d)", wrongBelow);
+    (void)side;
+}
+
 int main(void)
 {
     test_palette();
@@ -415,6 +462,7 @@ int main(void)
     test_faces();
     test_colours();
     test_ink();
+    TestGrassLipIsThin();
 
     if (sFailures != 0) {
         printf("%d art check(s) failed\n", sFailures);
