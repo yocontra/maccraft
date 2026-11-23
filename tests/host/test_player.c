@@ -387,6 +387,43 @@ static void TestClimbOutOfWater(void)
     CHECK(p.onGround);
 }
 
+/*
+ * 4f. Out of a lake with a two-block bank.
+ *
+ * The island's lake is one block of water over bedrock and its shore is sand
+ * three levels up; a one-block step-up left the pond a trap. A swimmer now
+ * hauls out onto a bank two blocks high -- and only a swimmer, so this cannot
+ * be used to climb walls on dry land.
+ */
+static void TestSwimOutOfTwoBlockBank(void)
+{
+    Player p;
+    int i;
+    short x, y;
+
+    ClearWorld();
+    for (x = 20; x < 28; x++)
+        for (y = 20; y < 28; y++) {
+            World_Set(x, y, 0, kBlockBedrock);
+            World_Set(x, y, 1, kBlockWater);
+        }
+    for (x = 28; x < 36; x++)
+        for (y = 20; y < 28; y++) {
+            World_Set(x, y, 0, kBlockDirt);
+            World_Set(x, y, 1, kBlockDirt);
+            World_Set(x, y, 2, kBlockSand);
+        }
+
+    Player_Spawn(&p, 24, 24, 2);
+    /* Enough ticks to haul out and stand on the bank, not enough to walk off
+     * its far end. */
+    for (i = 0; i < 60; i++)
+        Player_Step(&p, 1, 0, false);
+
+    CHECK(p.x > 28 * kPlayerOne);
+    CHECK(p.z == 3 * kPlayerOne);
+}
+
 /* 5. A two-block wall stops the player at its face while staying grounded. */
 static void TestWalls(void)
 {
@@ -524,6 +561,7 @@ int main(void)
     TestJumpGrace();
     TestSwimming();
     TestClimbOutOfWater();
+    TestSwimOutOfTwoBlockBank();
     TestWalls();
     TestFallingOff();
     TestNoTunnelling();

@@ -122,7 +122,11 @@ Boolean Hover_Update(Point local, const Rect *display, short camX, short camY,
         sValid = valid;
         sTileX = x;
         sTileY = y;
-        sLevel = surface;
+        /* The ring marks the block, not the empty cell above it. With a level
+         * worth a whole tile height, drawing at the surface level put the
+         * wireframe one block above its block, which read as the picker being
+         * one tile off. */
+        sLevel = (short)(surface > 0 ? surface - 1 : 0);
         sFace = face;
 
         if (dirty == NULL) {

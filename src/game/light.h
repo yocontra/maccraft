@@ -123,7 +123,11 @@ short Light_Combine(short faceFactor, short occlusion);
  */
 short Light_Level(short x, short y, short z);      /* 0..15; 0 outside */
 void  Light_Rebuild(void);                          /* whole world */
-void  Light_Relight(short x, short y, short z);     /* after an edit there */
+/* After an edit at (x,y,z). `touchedTorch` says a torch went in or came out:
+ * that needs a wide refill, because a torch reaches fifteen cells. Anything
+ * else only changes its own column's sky and a little local shadow, and a wide
+ * refill there was a second of frozen UI per placed block. */
+void  Light_Relight(short x, short y, short z, Boolean touchedTorch);
 short Light_Sky(void);                              /* current sun level 0..15 */
 void  Light_SetSky(short level);                    /* day, dusk, night */
 int   Light_TorchCount(void);                       /* for tests and the HUD */

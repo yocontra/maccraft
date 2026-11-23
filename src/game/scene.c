@@ -299,6 +299,36 @@ static void BuildTerrain(void)
     }
 }
 
+/* A one-block beach around every body of water.
+ *
+ * The lake is one block of water over bedrock and its shore was a three-block
+ * sand wall: a swimmer could not climb out, which made the pond a trap. Land
+ * that touches water is cut down to one block above sea level, so the shore is
+ * a shelf you can haul onto and a beach is what you see. */
+static void BuildBeach(void)
+{
+    short x, y, z;
+
+    for (x = 1; x < (short)(kWorldX - 1); x++) {
+        for (y = 1; y < (short)(kWorldY - 1); y++) {
+            short top = World_TopZ(x, y);
+            Boolean touches = (Boolean)(
+                World_Get((short)(x - 1), y, kSeaLevel) == kBlockWater ||
+                World_Get((short)(x + 1), y, kSeaLevel) == kBlockWater ||
+                World_Get(x, (short)(y - 1), kSeaLevel) == kBlockWater ||
+                World_Get(x, (short)(y + 1), kSeaLevel) == kBlockWater);
+
+            if (!touches || top <= (short)(kSeaLevel + 1)) {
+                continue;
+            }
+            for (z = (short)(kSeaLevel + 2); z <= top; z++) {
+                World_Set(x, y, z, kBlockEmpty);
+            }
+            World_Set(x, y, (short)(kSeaLevel + 1), kBlockSand);
+        }
+    }
+}
+
 /* ---------------------------------------------------------------- village */
 
 /* A hut on a flat plot: cobble sill, three courses of plank wall with log
@@ -609,6 +639,7 @@ void Scene_BuildIsland(void)
 {
     ClearWorld();
     BuildTerrain();
+    BuildBeach();
     BuildVillage();
     BuildForest();
 }

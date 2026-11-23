@@ -125,7 +125,7 @@ static void TestRelightMatchesRebuild(void)
 
     /* An edit inside both torches' reach. */
     CHECK(World_Set(22, 20, 1, kBlockStone));
-    Light_Relight(22, 20, 1);
+    Light_Relight(22, 20, 1, false);
 
     for (x = 16; x < 30; x++)
         for (y = 16; y < 25; y++)
@@ -140,7 +140,7 @@ static void TestRelightMatchesRebuild(void)
                            x, y, z, before, after);
                     failures++;
                 }
-                Light_Relight(22, 20, 1);
+                Light_Relight(22, 20, 1, false);
             }
 }
 

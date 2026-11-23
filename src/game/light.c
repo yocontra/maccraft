@@ -459,10 +459,15 @@ void Light_Rebuild(void)
               (short)(kWorldZ - 1));
 }
 
-void Light_Relight(short x, short y, short z)
+void Light_Relight(short x, short y, short z, Boolean touchedTorch)
 {
-    short x0 = (short)(x - 16), x1 = (short)(x + 16);
-    short y0 = (short)(y - 16), y1 = (short)(y + 16);
+    /* A torch reaches kTorchReach cells, so only a torch going in or out needs
+     * a box that wide; anything else refills a small one. The sky pass is the
+     * single edited column either way -- a block in the air cannot change the
+     * sky of its neighbours. */
+    short radius = touchedTorch ? 16 : 6;
+    short x0 = (short)(x - radius), x1 = (short)(x + radius);
+    short y0 = (short)(y - radius), y1 = (short)(y + radius);
 
     (void)z;
 
@@ -471,7 +476,7 @@ void Light_Relight(short x, short y, short z)
     if (x1 >= kWorldX) x1 = (short)(kWorldX - 1);
     if (y1 >= kWorldY) y1 = (short)(kWorldY - 1);
 
-    SkyPass(x0, x1, y0, y1);
+    SkyPass(x, x, y, y);
     TorchFill(x0, y0, 0, x1, y1, (short)(kWorldZ - 1));
 }
 

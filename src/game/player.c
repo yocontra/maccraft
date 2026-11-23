@@ -315,6 +315,19 @@ static Boolean TryStepUp(long x, long y, long z)
     return true;
 }
 
+/* Swimming gives the player a shove out of the water: the lake's shore is a
+ * two-block bank, and with a one-block step the pond was a trap -- you could get
+ * in and never out. Only a swimmer gets this, so it cannot climb walls on land. */
+static Boolean TrySwimOut(long x, long y, long z)
+{
+    long nz = z + 2 * kPlayerOne;
+
+    /* Only the landing matters: the block between the two levels is under the
+     * feet once the player is up there, and requiring it to be empty refused
+     * every bank that is exactly two blocks tall. */
+    return (Boolean)!BoxHits(x, y, nz);
+}
+
 static void SolveX(Player *p)
 {
     long remaining = p->vx;
@@ -336,6 +349,13 @@ static void SolveX(Player *p)
         if ((p->onGround || InWater(p->x, p->y, p->z)) &&
             TryStepUp(nx, p->y, p->z)) {
             p->z = p->z + kPlayerOne;
+            p->x = nx;
+            remaining -= step;
+            continue;
+        }
+        /* In water a bank two blocks up is still a bank: haul out. */
+        if (InWater(p->x, p->y, p->z) && TrySwimOut(nx, p->y, p->z)) {
+            p->z = p->z + 2 * kPlayerOne;
             p->x = nx;
             remaining -= step;
             continue;
@@ -372,6 +392,12 @@ static void SolveY(Player *p)
         if ((p->onGround || InWater(p->x, p->y, p->z)) &&
             TryStepUp(p->x, ny, p->z)) {
             p->z = p->z + kPlayerOne;
+            p->y = ny;
+            remaining -= step;
+            continue;
+        }
+        if (InWater(p->x, p->y, p->z) && TrySwimOut(p->x, ny, p->z)) {
+            p->z = p->z + 2 * kPlayerOne;
             p->y = ny;
             remaining -= step;
             continue;

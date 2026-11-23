@@ -434,6 +434,52 @@ void Remote_Apply(const char *cmd)
             Remote_SetResult(out);
         }
     }
+    else if (strncmp(cmd, "screen ", 7) == 0) {
+        /* screen x y z: window-local pixel position of a tile's top face. */
+        const char *arg = cmd + 7;
+        short vals[3];
+        short n = 0, sign = 1;
+        long acc = 0;
+        Boolean any = false;
+        short sx = 0, sy = 0;
+        char out[24];
+        short q = 0;
+        long v;
+
+        vals[0] = 0; vals[1] = 0; vals[2] = 0;
+        while (*arg && n < 3) {
+            if (*arg == ' ') {
+                if (any) { vals[n++] = (short)(acc * sign); acc = 0; sign = 1; any = false; }
+                arg++;
+                continue;
+            }
+            if (*arg == '-') { sign = -1; arg++; continue; }
+            if (*arg >= '0' && *arg <= '9') { acc = acc * 10 + (*arg - '0'); any = true; }
+            arg++;
+        }
+        if (any && n < 3) { vals[n++] = (short)(acc * sign); }
+        if (n < 3) {
+            Remote_SetResult("screen needs x y z");
+        }
+        else {
+            GameWindow_TileScreen(vals[0], vals[1], vals[2], &sx, &sy);
+            v = (long)sx;
+            if (v < 0) { out[q++] = '-'; v = -v; }
+            { short digits[6]; short k = 0;
+              if (v == 0) digits[k++] = 0;
+              while (v > 0 && k < 5) { digits[k++] = (short)(v % 10); v /= 10; }
+              while (k > 0) out[q++] = (char)('0' + digits[--k]); }
+            out[q++] = ' ';
+            v = (long)sy;
+            if (v < 0) { out[q++] = '-'; v = -v; }
+            { short digits[6]; short k = 0;
+              if (v == 0) digits[k++] = 0;
+              while (v > 0 && k < 5) { digits[k++] = (short)(v % 10); v /= 10; }
+              while (k > 0) out[q++] = (char)('0' + digits[--k]); }
+            out[q] = 0;
+            Remote_SetResult(out);
+        }
+    }
     else if (strncmp(cmd, "set ", 4) == 0) {
         /* set x y z id: write a cell and relight, for harness scenes. */
         const char *arg = cmd + 4;
@@ -458,7 +504,7 @@ void Remote_Apply(const char *cmd)
             Remote_SetResult("set needs x y z id");
         }
         else if (World_Set(vals[0], vals[1], vals[2], (BlockID)vals[3])) {
-            Light_Relight(vals[0], vals[1], vals[2]);
+            Light_Relight(vals[0], vals[1], vals[2], (Boolean)(vals[3] == kBlockTorch));
             GameWindow_Repaint();
             Remote_SetResult("set");
         }

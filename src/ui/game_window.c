@@ -388,7 +388,8 @@ static void FinishBreak(void)
         return;
     }
     if (World_Set(sBreakX, sBreakY, sBreakZ, 0)) {
-        Light_Relight(sBreakX, sBreakY, sBreakZ);
+        Light_Relight(sBreakX, sBreakY, sBreakZ,
+                      (Boolean)(sBreakId == kBlockTorch));
         Boolean hard = (Boolean)(sBreakId == kBlockStone ||
                                  sBreakId == kBlockCobblestone ||
                                  sBreakId == kBlockBrick ||
@@ -968,13 +969,10 @@ static Boolean GameWindow_HandleContentClick(Point localPt, Boolean shiftDown)
                  World_Get(placeX, placeY, placeZ) == 0 &&
                  !BlockFillsPlayer(placeX, placeY, placeZ) &&
                  World_Set(placeX, placeY, placeZ, (BlockID)(sBlockType + 1))) {
-            Light_Relight(placeX, placeY, placeZ);
+            Light_Relight(placeX, placeY, placeZ,
+                          (Boolean)(sBlockType + 1 == kBlockTorch));
             Sfx_Play(kSfxPlace);
-            /* A small burst of the block's own colour: the placement reads even
-             * where the new block is behind something. */
-            Particles_Spawn(placeX, placeY, placeZ, (BlockID)(sBlockType + 1));
             Hover_Reset();
-            sSwingUntil = (unsigned long)TickCount() + 8;
             InvalidateColumn(placeX, placeY, placeZ);
         }
 
