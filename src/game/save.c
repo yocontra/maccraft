@@ -27,7 +27,7 @@
  * older build holds a world that no longer matches the generator (one-block
  * trunks, huts without doorways), and resuming it made every fixed bug look
  * unfixed on the guest. */
-#define kSaveVersion 8
+#define kSaveVersion 9
 
 static const unsigned char kSaveName[] = "\pMacCraft World";
 

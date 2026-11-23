@@ -583,6 +583,11 @@ void Remote_Apply(const char *cmd)
             Remote_SetResult(out);
         }
     }
+    else if (strncmp(cmd, "reset", 5) == 0) {
+        /* Rebuild the island: the harness leaves test edits in the world. */
+        GameWindow_ResetWorld();
+        Remote_SetResult("reset");
+    }
     else if (strncmp(cmd, "sun", 3) == 0) {
         /* sun <0..15>: set the sky level outright, for the harness. */
         const char *arg = cmd + 3;

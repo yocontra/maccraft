@@ -17,9 +17,9 @@ or SE as well as a Quadra.
 <img src="docs/img/game.png" alt="MacCraft: four plank houses with pitched roofs and brick chimneys around a village square, with trees, a lake, and the block selector along the bottom" width="100%">
 
 <p align="center">
-  <img src="docs/img/lake.png" alt="The island's lake: a sand shore with trees, the player swimming in dithered water" width="32%">
-  <img src="docs/img/forest.png" alt="The forest and snow-capped stone hills" width="32%">
-  <img src="docs/img/night.png" alt="The village at night, lit by two torches beside the well" width="32%">
+  <img src="docs/img/lake.png" alt="The lake: a sand beach, trees, and the player swimming in the dithered water" width="32%">
+  <img src="docs/img/forest.png" alt="The east coast: sand cliffs, the snow-capped stone hill, and the sea beyond" width="32%">
+  <img src="docs/img/night.png" alt="The village at night: dark water, the beach, and two torches burning in the square" width="32%">
 </p>
 
 ## Controls
